@@ -11,7 +11,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
  */
 export async function generateSignal({ symbol, marketData, technicalData, quantData, news, calendar, intermarket, sentiment }) {
     try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
         const currentPrice = marketData.pricesH1.length > 0 ?
             marketData.pricesH1[marketData.pricesH1.length - 1].close : 0;
@@ -252,7 +252,7 @@ function parseAIResponse(text, symbol, currentPrice) {
             timeframeAlignment: parsed.timeframeAlignment || '',
             reasoning: (parsed.reasons || []).join('; '),
             timestamp: new Date().toISOString(),
-            source: 'gemini-pro'
+            source: 'gemini-2.0-flash'
         };
     } catch (error) {
         console.error('Error parsing AI response:', error.message);

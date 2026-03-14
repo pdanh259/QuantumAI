@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
 
-export default function PriceChart({ timeframe, signal }) {
+export default function PriceChart({ timeframe, signal, symbol = 'XAU/USD' }) {
     const chartContainerRef = useRef(null);
     const chartRef = useRef(null);
     const seriesRef = useRef(null);
@@ -80,7 +80,7 @@ export default function PriceChart({ timeframe, signal }) {
         async function loadData() {
             setLoading(true);
             try {
-                const res = await fetch(`/api/prices/${timeframe}`);
+                const res = await fetch(`/api/prices/${timeframe}?symbol=${encodeURIComponent(symbol)}`);
                 const json = await res.json();
                 if (json.success && json.data && seriesRef.current) {
                     const formatted = json.data.map(d => ({
@@ -154,7 +154,7 @@ export default function PriceChart({ timeframe, signal }) {
             }
         }
         loadData();
-    }, [timeframe, signal]);
+    }, [timeframe, signal, symbol]);
 
     return (
         <div style={{ position: 'relative' }}>

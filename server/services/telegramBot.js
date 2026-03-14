@@ -11,6 +11,15 @@ export function initTelegramBot() {
     try {
         bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
+        // Suppress polling conflict errors (when multiple instances use same bot)
+        bot.on('polling_error', (error) => {
+            if (error.code === 'ETELEGRAM' && error.message.includes('409 Conflict')) {
+                // Silently ignore - another instance is running
+            } else {
+                console.error('Telegram polling error:', error.message);
+            }
+        });
+
         bot.onText(/\/start/, (msg) => {
             const chatId = msg.chat.id;
             bot.sendMessage(chatId,
@@ -31,8 +40,10 @@ export function initTelegramBot() {
                 `📊 *QuantumAI Status*\n\n` +
                 `✅ Server: Online\n` +
                 `⏰ Time: ${new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}\n` +
-                `📈 Symbol: ${process.env.SYMBOL || 'XAU/USD'}\n` +
-                `🤖 AI Engine: Gemini Pro`,
+                `📈 Monitoring: XAU/USD, BTC/USD, ETH/USD, EUR/USD\n` +
+                `🔄 Auto-scan: Every 15 minutes\n` +
+                `🤖 AI Engine: Gemini Pro\n` +
+                `📱 Only BUY/SELL → Telegram alert`,
                 { parse_mode: 'Markdown' }
             );
         });
@@ -61,6 +72,23 @@ export async function sendTelegramSignal(signal) {
         return true;
     } catch (error) {
         console.error('Telegram send error:', error.message);
+        return false;
+    }
+}
+
+/**
+ * Send a generic text message to Telegram
+ */
+export async function sendTelegramMessage(text) {
+    if (!bot || !process.env.TELEGRAM_CHAT_ID) return false;
+    try {
+        await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, text, {
+            parse_mode: 'HTML',
+            disable_web_page_preview: true
+        });
+        return true;
+    } catch (error) {
+        console.error('Telegram message error:', error.message);
         return false;
     }
 }

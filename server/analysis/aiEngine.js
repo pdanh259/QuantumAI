@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
+import { generateLearningContext } from '../services/signalHistory.js';
 dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -10,7 +11,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
  */
 export async function generateSignal({ symbol, marketData, technicalData, quantData, news, calendar, intermarket, sentiment }) {
     try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
         const currentPrice = marketData.pricesH1.length > 0 ?
             marketData.pricesH1[marketData.pricesH1.length - 1].close : 0;
@@ -19,9 +20,13 @@ export async function generateSignal({ symbol, marketData, technicalData, quantD
             symbol, currentPrice, technicalData, quantData, news, calendar, intermarket, sentiment
         });
 
+        // Append learning context from past performance
+        const learningCtx = generateLearningContext();
+        const fullPrompt = learningCtx ? prompt + learningCtx : prompt;
+
         console.log('📤 Sending prompt to Gemini...');
 
-        const result = await model.generateContent(prompt);
+        const result = await model.generateContent(fullPrompt);
         const response = await result.response;
         const text = response.text();
 
@@ -275,7 +280,8 @@ function createNoTradeSignal(symbol, reason) {
 }
 
 /**
- * Fallback signal generation from technical data when AI is unavailable
+ * Fallback signal generation with Multi-Timeframe Confirmation
+ * Requires at least 2/3 timeframes (H1, H4, D1) to agree on direction
  */
 function generateFallbackSignal(symbol, technicalData, marketData, quantData) {
     console.log('⚠️ Using fallback signal generation (no AI)');
@@ -286,73 +292,213 @@ function generateFallbackSignal(symbol, technicalData, marketData, quantData) {
     }
 
     const currentPrice = h1.currentPrice;
-    const atr = h1.volatility?.atr || 10;
-    const bias = h1.bias;
-
-    if (!bias || bias.direction === 'SIDEWAYS') {
-        return createNoTradeSignal(symbol, 'Thị trường đi ngang, không có tín hiệu rõ ràng');
+    if (!currentPrice || currentPrice <= 0) {
+        return createNoTradeSignal(symbol, 'Giá không hợp lệ');
     }
 
-    const isBuy = bias.direction.includes('BULLISH');
-    const entry = currentPrice;
-    const sl = isBuy ? round(entry - atr * 1.5) : round(entry + atr * 1.5);
-    const tp1 = isBuy ? round(entry + atr * 1.5) : round(entry - atr * 1.5);
-    const tp2 = isBuy ? round(entry + atr * 3) : round(entry - atr * 3);
+    // Symbol-aware pip size and decimal places
+    const symbolConfig = getSymbolConfig(symbol, currentPrice);
+    const pipSize = symbolConfig.pipSize;
+    const decimals = symbolConfig.decimals;
 
-    const confidence = Math.min(90, Math.max(30,
-        bias.bullishPct > 65 || bias.bullishPct < 35 ? 65 : 45
-    ));
+    // ATR: use actual computed value, fallback to % of price
+    let atr = h1.volatility?.atr;
+    if (!atr || atr <= 0) {
+        atr = currentPrice * 0.002;
+    }
 
-    // Use quant composite score if available
+    // ========== MULTI-TIMEFRAME CONFIRMATION ==========
+    const mtf = analyzeMultiTimeframe(technicalData);
+
+    if (!mtf.hasConsensus) {
+        return createNoTradeSignal(symbol,
+            `MTF xung đột: H1=${mtf.h1Dir}, H4=${mtf.h4Dir}, D1=${mtf.d1Dir}`
+        );
+    }
+
+    const techBullish = mtf.direction === 'BULLISH';
+    let mtfConfidence = mtf.confidence;
+
+    // ========== QUANT VALIDATION ==========
     const quantScore = quantData?.compositeScore?.score || null;
     const quantSignal = quantData?.compositeScore?.signal || null;
 
-    // Override direction if quant strongly disagrees
-    let finalAction = isBuy ? 'BUY' : 'SELL';
-    let finalConfidence = confidence;
+    let finalAction;
+    let confidence;
+
     if (quantScore !== null) {
-        // Boost confidence if quant agrees
-        if ((isBuy && quantScore >= 55) || (!isBuy && quantScore <= 45)) {
-            finalConfidence = Math.min(85, confidence + 10);
+        const quantBullish = quantScore >= 55;
+        const quantBearish = quantScore <= 45;
+        const quantStrongBuy = quantScore >= 65;
+        const quantStrongSell = quantScore <= 35;
+        const quantNeutral = quantScore > 45 && quantScore < 55;
+
+        if (techBullish && quantBullish) {
+            finalAction = 'BUY';
+            confidence = mtfConfidence + (quantStrongBuy ? 10 : 5);
+        } else if (!techBullish && quantBearish) {
+            finalAction = 'SELL';
+            confidence = mtfConfidence + (quantStrongSell ? 10 : 5);
+        } else if (quantNeutral) {
+            return createNoTradeSignal(symbol,
+                `Quant NEUTRAL (${quantScore}/100), MTF=${mtf.direction}`
+            );
+        } else if (techBullish && quantStrongSell) {
+            return createNoTradeSignal(symbol,
+                `MTF BUY vs Quant STRONG_SELL (${quantScore}/100)`
+            );
+        } else if (!techBullish && quantStrongBuy) {
+            return createNoTradeSignal(symbol,
+                `MTF SELL vs Quant STRONG_BUY (${quantScore}/100)`
+            );
+        } else {
+            finalAction = techBullish ? 'BUY' : 'SELL';
+            confidence = mtfConfidence - 10;
         }
-        // Reduce confidence if quant disagrees
-        if ((isBuy && quantScore <= 40) || (!isBuy && quantScore >= 60)) {
-            finalConfidence = Math.max(30, confidence - 15);
-        }
+    } else {
+        finalAction = techBullish ? 'BUY' : 'SELL';
+        confidence = mtfConfidence - 5;
     }
+
+    confidence = Math.min(90, Math.max(35, confidence));
+
+    if (confidence < 50) {
+        return createNoTradeSignal(symbol, `Confidence thấp (${confidence}%)`);
+    }
+
+    const isBuy = finalAction === 'BUY';
+    const entry = currentPrice;
+    const sl = isBuy ? roundTo(entry - atr * 1.5, decimals) : roundTo(entry + atr * 1.5, decimals);
+    const tp1 = isBuy ? roundTo(entry + atr * 1.5, decimals) : roundTo(entry - atr * 1.5, decimals);
+    const tp2 = isBuy ? roundTo(entry + atr * 3, decimals) : roundTo(entry - atr * 3, decimals);
+
+    const slPips = roundTo(Math.abs(entry - sl) / pipSize, 1);
+    const tp1Pips = roundTo(Math.abs(tp1 - entry) / pipSize, 1);
+    const tp2Pips = roundTo(Math.abs(tp2 - entry) / pipSize, 1);
 
     return {
         symbol,
         action: finalAction,
-        entry: round(entry),
-        stopLoss: round(sl),
-        tp1: round(tp1),
-        tp2: round(tp2),
-        slPips: round(Math.abs(entry - sl) / 0.1),
-        tp1Pips: round(Math.abs(tp1 - entry) / 0.1),
-        tp2Pips: round(Math.abs(tp2 - entry) / 0.1),
-        confidence: finalConfidence,
+        entry: roundTo(entry, decimals),
+        stopLoss: roundTo(sl, decimals),
+        tp1: roundTo(tp1, decimals),
+        tp2: roundTo(tp2, decimals),
+        slPips, tp1Pips, tp2Pips,
+        confidence,
         riskReward: '1:2',
         reasons: [
-            `Bias ${h1.timeframe}: ${bias.summary}`,
+            `MTF: H1=${mtf.h1Dir} | H4=${mtf.h4Dir} | D1=${mtf.d1Dir} (${mtf.agreement}/3)`,
+            `Bias H1: ${h1.bias?.summary || 'N/A'}`,
             `RSI(14): ${h1.momentum?.rsi?.value} (${h1.momentum?.rsi?.condition})`,
-            `EMA Alignment: ${h1.trend?.emaAlignment}`,
-            `SL/TP dựa trên ATR(14): ${atr}`,
-            quantScore !== null ? `Quant Score: ${quantScore}/100 → ${quantSignal}` : null,
-            quantData?.winProbability ? `Win Probability: ${quantData.winProbability.probability}%` : null
+            `EMA: ${h1.trend?.emaAlignment}`,
+            `ATR(14): ${roundTo(atr, decimals)}`,
+            quantScore !== null ? `Quant: ${quantScore}/100 → ${quantSignal}` : null,
+            quantData?.winProbability ? `Win Prob: ${quantData.winProbability.probability}%` : null
         ].filter(Boolean),
         warnings: [
-            'Signal từ fallback engine (không có AI)',
-            'Cần xác nhận thêm trước khi vào lệnh',
-            quantData?.volatilityRegime?.regime === 'EXTREME' ? 'Volatility cực cao — giảm khối lượng' : null
+            'Fallback engine (no AI)',
+            mtf.agreement < 3 ? `Chỉ ${mtf.agreement}/3 TF đồng thuận` : null,
+            quantData?.volatilityRegime?.regime === 'EXTREME' ? 'Volatility cực cao' : null
         ].filter(Boolean),
-        marketCondition: bias.trendStrong ? 'TRENDING' : 'RANGING',
+        marketCondition: h1.bias?.trendStrong ? 'TRENDING' : 'RANGING',
         timestamp: new Date().toISOString(),
-        source: 'fallback'
+        source: 'fallback_mtf'
     };
+}
+
+/**
+ * Analyze bias across multiple timeframes and determine consensus
+ */
+function analyzeMultiTimeframe(technicalData) {
+    const h1 = technicalData?.H1;
+    const h4 = technicalData?.H4;
+    const d1 = technicalData?.D1;
+
+    function getDirection(tf) {
+        if (!tf || tf.error || !tf.bias) return 'NONE';
+        if (tf.bias.direction.includes('BULLISH')) return 'BULL';
+        if (tf.bias.direction.includes('BEARISH')) return 'BEAR';
+        return 'SIDE';
+    }
+
+    const h1Dir = getDirection(h1);
+    const h4Dir = getDirection(h4);
+    const d1Dir = getDirection(d1);
+
+    let bullishCount = 0, bearishCount = 0, availableCount = 0;
+
+    for (const dir of [h1Dir, h4Dir, d1Dir]) {
+        if (dir === 'NONE') continue;
+        availableCount++;
+        if (dir === 'BULL') bullishCount++;
+        if (dir === 'BEAR') bearishCount++;
+    }
+
+    if (availableCount < 2) {
+        if (h1Dir === 'BULL' || h1Dir === 'BEAR') {
+            return {
+                direction: h1Dir === 'BULL' ? 'BULLISH' : 'BEARISH',
+                hasConsensus: true, agreement: 1,
+                h1Dir, h4Dir, d1Dir, confidence: 45,
+            };
+        }
+        return { direction: 'NONE', hasConsensus: false, agreement: 0, h1Dir, h4Dir, d1Dir, confidence: 0 };
+    }
+
+    const hasConsensus = bullishCount >= 2 || bearishCount >= 2;
+    const direction = bullishCount >= 2 ? 'BULLISH' : bearishCount >= 2 ? 'BEARISH' : 'MIXED';
+    const agreement = Math.max(bullishCount, bearishCount);
+
+    let confidence;
+    if (agreement === 3) confidence = 75;
+    else if (agreement === 2 && availableCount === 3) confidence = 60;
+    else if (agreement === 2 && availableCount === 2) confidence = 55;
+    else confidence = 40;
+
+    if (h1?.trend?.adx?.trendStrength === 'strong') confidence += 5;
+
+    const rsi = h1?.momentum?.rsi?.value;
+    if (rsi) {
+        if (direction === 'BULLISH' && rsi > 75) confidence -= 10;
+        if (direction === 'BEARISH' && rsi < 25) confidence -= 10;
+    }
+
+    return { direction, hasConsensus, agreement, h1Dir, h4Dir, d1Dir, confidence };
+}
+
+/**
+ * Get symbol-specific configuration for pip size and decimal places
+ */
+function getSymbolConfig(symbol, currentPrice) {
+    const sym = symbol.toUpperCase();
+
+    // Gold
+    if (sym.includes('XAU')) {
+        return { pipSize: 0.1, decimals: 2 };
+    }
+    // JPY pairs
+    if (sym.includes('JPY')) {
+        return { pipSize: 0.01, decimals: 3 };
+    }
+    // Crypto
+    if (sym.includes('BTC')) {
+        return { pipSize: 1, decimals: 2 };
+    }
+    if (sym.includes('ETH')) {
+        return { pipSize: 0.1, decimals: 2 };
+    }
+    // Standard forex (EUR/USD, GBP/USD, etc.)
+    return { pipSize: 0.0001, decimals: 5 };
+}
+
+function roundTo(val, decimals = 2) {
+    if (val === null || val === undefined) return null;
+    const factor = Math.pow(10, decimals);
+    return Math.round(val * factor) / factor;
 }
 
 function round(val) {
     if (val === null || val === undefined) return null;
     return Math.round(val * 100) / 100;
 }
+

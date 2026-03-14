@@ -118,6 +118,95 @@ app.get('/api/prices/:timeframe', async (req, res) => {
     }
 });
 
+// ==================== LIGHTWEIGHT INDICATORS (no AI) ====================
+app.get('/api/indicators', async (req, res) => {
+    try {
+        const symbol = getSymbol(req);
+        const cache = getCache(symbol);
+
+        // Try to fetch fresh data
+        const [pricesH1, pricesH4, pricesD1, intermarket, sentiment] =
+            await Promise.allSettled([
+                fetchPriceData(symbol, '1h', 100),
+                fetchPriceData(symbol, '4h', 100),
+                fetchPriceData(symbol, '1day', 100),
+                fetchIntermarketData(),
+                fetchSentiment()
+            ]);
+
+        const h1 = pricesH1.status === 'fulfilled' ? pricesH1.value : [];
+        const h4 = pricesH4.status === 'fulfilled' ? pricesH4.value : [];
+        const d1 = pricesD1.status === 'fulfilled' ? pricesD1.value : [];
+
+        // Run technical analysis if we have price data
+        let technicalData = {};
+        if (h1.length > 0) technicalData.H1 = runTechnicalAnalysis(h1, 'H1');
+        if (h4.length > 0) technicalData.H4 = runTechnicalAnalysis(h4, 'H4');
+        if (d1.length > 0) technicalData.D1 = runTechnicalAnalysis(d1, 'D1');
+
+        // Intermarket + sentiment (use fresh if available, else cache)
+        const intermarketData = intermarket.status === 'fulfilled' && Object.keys(intermarket.value || {}).length > 0
+            ? intermarket.value : (cache.intermarket || {});
+        const sentimentData = sentiment.status === 'fulfilled' && sentiment.value?.fearGreedIndex
+            ? sentiment.value : (cache.sentiment || {});
+
+        // Fallback to cache if fresh technical data is empty
+        if (Object.keys(technicalData).length === 0 && cache.technicalAnalysis) {
+            technicalData = cache.technicalAnalysis;
+        }
+
+        // Run quant analysis (or use cache)
+        let quantData;
+        if (Object.keys(technicalData).length > 0) {
+            const marketData = {
+                pricesH1: h1, pricesH4: h4, pricesD1: d1, pricesM15: [],
+                news: [], calendar: [],
+                intermarket: intermarketData, sentiment: sentimentData
+            };
+            quantData = runQuantAnalysis(marketData, intermarketData, technicalData);
+        } else {
+            quantData = cache.quantData || null;
+        }
+
+        // Update cache only if we got fresh data
+        if (Object.keys(technicalData).length > 0 && h1.length > 0) {
+            cache.technicalAnalysis = technicalData;
+            cache.quantData = quantData;
+        }
+        if (Object.keys(intermarketData).length > 0) cache.intermarket = intermarketData;
+        if (sentimentData?.fearGreedIndex) cache.sentiment = sentimentData;
+
+        res.json({
+            success: true,
+            technicalAnalysis: technicalData,
+            quantData,
+            marketData: {
+                intermarket: intermarketData,
+                sentiment: sentimentData
+            },
+            cached: h1.length === 0  // indicate if using cached data
+        });
+    } catch (error) {
+        console.error('Error fetching indicators:', error.message);
+        // Even on error, try to serve cached data
+        const symbol = getSymbol(req);
+        const cache = getCache(symbol);
+        if (cache.technicalAnalysis) {
+            return res.json({
+                success: true,
+                technicalAnalysis: cache.technicalAnalysis,
+                quantData: cache.quantData,
+                marketData: {
+                    intermarket: cache.intermarket || {},
+                    sentiment: cache.sentiment || {}
+                },
+                cached: true
+            });
+        }
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // ==================== CORE ANALYSIS FUNCTION ====================
 async function runFullAnalysis(symbol) {
     console.log(`\n🔄 Starting AI analysis for ${symbol}...`);

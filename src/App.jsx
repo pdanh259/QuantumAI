@@ -40,17 +40,60 @@ export default function App() {
             .catch(() => { });
     }, []);
 
-    // Reset data when symbol changes
+    // Reset signal when symbol changes (indicators will auto-reload via useEffect)
     const handleSymbolChange = useCallback((sym) => {
         setActiveSymbol(sym);
         setShowSymbolDropdown(false);
         setSignal(null);
-        setTechnicalData(null);
-        setQuantData(null);
-        setMarketData(null);
-        setLastUpdate(null);
         setError(null);
     }, []);
+
+    // ═══════ AUTO-LOAD: Indicators + Market Data on mount & symbol change ═══════
+    useEffect(() => {
+        let cancelled = false;
+        const loadIndicators = async () => {
+            try {
+                const res = await fetch(`/api/indicators?symbol=${encodeURIComponent(activeSymbol)}`);
+                const data = await res.json();
+                if (!cancelled && data.success) {
+                    setTechnicalData(data.technicalAnalysis);
+                    setQuantData(data.quantData || null);
+                    setMarketData(prev => ({
+                        ...prev,
+                        intermarket: data.marketData?.intermarket,
+                        sentiment: data.marketData?.sentiment
+                    }));
+                }
+            } catch (err) {
+                console.warn('Auto-load indicators failed:', err.message);
+            }
+        };
+        loadIndicators();
+        return () => { cancelled = true; };
+    }, [activeSymbol]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadMarketData = async () => {
+            try {
+                const res = await fetch(`/api/market-data?symbol=${encodeURIComponent(activeSymbol)}`);
+                const data = await res.json();
+                if (!cancelled && data.success) {
+                    setMarketData(prev => ({
+                        ...prev,
+                        news: data.data?.news,
+                        calendar: data.data?.calendar,
+                        intermarket: prev?.intermarket || data.data?.intermarket,
+                        sentiment: prev?.sentiment || data.data?.sentiment
+                    }));
+                }
+            } catch (err) {
+                console.warn('Auto-load market data failed:', err.message);
+            }
+        };
+        loadMarketData();
+        return () => { cancelled = true; };
+    }, [activeSymbol]);
 
     const handleAnalyze = useCallback(async () => {
         setAnalyzing(true);

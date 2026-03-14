@@ -4,11 +4,21 @@ dotenv.config();
 
 const API_KEY = process.env.TWELVEDATA_API_KEY;
 
+// ==================== TTL CACHE ====================
+let intermarketCache = null;
+let intermarketCacheTime = 0;
+const INTERMARKET_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+
 /**
- * Fetch intermarket correlation data
+ * Fetch intermarket correlation data (with TTL cache)
  * Gold is inversely correlated with DXY and positively with risk assets
  */
 export async function fetchIntermarketData() {
+    // Return cached data if still fresh
+    if (intermarketCache && (Date.now() - intermarketCacheTime) < INTERMARKET_CACHE_TTL) {
+        return intermarketCache;
+    }
+
     const symbols = [
         { symbol: 'DXY', name: 'US Dollar Index', correlation: 'inverse' },
         { symbol: 'SPX', name: 'S&P 500', correlation: 'mixed' },
@@ -56,6 +66,12 @@ export async function fetchIntermarketData() {
             console.error(`Error fetching ${symbol}:`, error.message);
             results[symbol] = { name, symbol, error: true, current: null };
         }
+    }
+
+    // Cache if we got valid data
+    if (Object.keys(results).length > 0) {
+        intermarketCache = results;
+        intermarketCacheTime = Date.now();
     }
 
     return results;

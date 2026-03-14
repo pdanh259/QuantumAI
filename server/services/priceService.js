@@ -5,14 +5,51 @@ dotenv.config();
 const API_KEY = process.env.TWELVEDATA_API_KEY;
 const BASE_URL = 'https://api.twelvedata.com';
 
+// ==================== TTL CACHE ====================
+const priceCache = {};
+const CACHE_TTL = {
+    '1h': 10 * 60 * 1000,  // 10 minutes
+    '4h': 30 * 60 * 1000,  // 30 minutes
+    '1day': 60 * 60 * 1000,  // 1 hour
+    '15min': 5 * 60 * 1000,  // 5 minutes
+};
+
+function getCacheKey(symbol, interval) {
+    return `${symbol}_${interval}`;
+}
+
+function getCachedPrice(symbol, interval) {
+    const key = getCacheKey(symbol, interval);
+    const entry = priceCache[key];
+    if (!entry) return null;
+
+    const ttl = CACHE_TTL[interval] || 10 * 60 * 1000;
+    if (Date.now() - entry.timestamp > ttl) return null; // expired
+
+    return entry.data;
+}
+
+function setCachedPrice(symbol, interval, data) {
+    const key = getCacheKey(symbol, interval);
+    priceCache[key] = { data, timestamp: Date.now() };
+}
+
+// ==================== API FUNCTIONS ====================
+
 /**
- * Fetch OHLCV price data from Twelve Data API
+ * Fetch OHLCV price data from Twelve Data API (with TTL cache)
  * @param {string} symbol - Trading symbol (e.g., 'XAU/USD')
  * @param {string} interval - Timeframe ('1min','5min','15min','30min','1h','4h','1day')
  * @param {number} outputsize - Number of candles to fetch
  * @returns {Array} Array of OHLCV candles
  */
 export async function fetchPriceData(symbol, interval, outputsize = 100) {
+    // Check cache first
+    const cached = getCachedPrice(symbol, interval);
+    if (cached) {
+        return cached;
+    }
+
     try {
         const response = await axios.get(`${BASE_URL}/time_series`, {
             params: {
@@ -33,7 +70,7 @@ export async function fetchPriceData(symbol, interval, outputsize = 100) {
         const values = response.data.values || [];
 
         // Convert and reverse to chronological order (oldest first)
-        return values.reverse().map(v => ({
+        const result = values.reverse().map(v => ({
             time: v.datetime,
             open: parseFloat(v.open),
             high: parseFloat(v.high),
@@ -41,6 +78,13 @@ export async function fetchPriceData(symbol, interval, outputsize = 100) {
             close: parseFloat(v.close),
             volume: parseFloat(v.volume || 0)
         }));
+
+        // Cache the result
+        if (result.length > 0) {
+            setCachedPrice(symbol, interval, result);
+        }
+
+        return result;
     } catch (error) {
         console.error(`Error fetching ${symbol} ${interval}:`, error.message);
         return [];
@@ -56,8 +100,10 @@ export async function fetchMultiTimeframeData(symbol) {
 
     for (const tf of timeframes) {
         results[tf] = await fetchPriceData(symbol, tf, 100);
-        // Small delay to avoid rate limiting
-        await new Promise(r => setTimeout(r, 500));
+        // Small delay to avoid rate limiting (only if not cached)
+        if (!getCachedPrice(symbol, tf)) {
+            await new Promise(r => setTimeout(r, 500));
+        }
     }
 
     return results;

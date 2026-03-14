@@ -96,7 +96,12 @@ void PollSignals()
 
     lastPollTime = TimeCurrent();
 
-    string url = ServerURL + "/api/ea/signals";
+    // Build URL - strip trailing slash to avoid double-slash issues
+    string baseUrl = ServerURL;
+    if(StringGetCharacter(baseUrl, StringLen(baseUrl) - 1) == '/')
+        baseUrl = StringSubstr(baseUrl, 0, StringLen(baseUrl) - 1);
+
+    string url = baseUrl + "/api/ea/signals";
     string result = "";
 
     if(!HttpGet(url, result))
@@ -160,10 +165,10 @@ bool HttpGet(string url, string &response)
 //+------------------------------------------------------------------+
 void ProcessSignals(string json)
 {
-    // Check success
-    if(StringFind(json, "\"success\":true") < 0)
+    // Check success (handle both "success":true and "success": true)
+    if(StringFind(json, "\"success\":true") < 0 && StringFind(json, "\"success\": true") < 0)
     {
-        Print("⚠️ API returned error");
+        Print("⚠️ API returned error. Response: ", StringSubstr(json, 0, 500));
         return;
     }
 

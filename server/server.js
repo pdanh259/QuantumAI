@@ -415,7 +415,7 @@ app.get('*', (req, res) => {
 });
 
 // ==================== AUTO-ANALYSIS CRON ====================
-const AUTO_SYMBOLS = ['XAU/USD', 'BTC/USD', 'ETH/USD', 'EUR/USD'];
+const AUTO_SYMBOLS = ['XAU/USD', 'BTC/USD'];  // Reduced to save API credits
 let autoAnalysisEnabled = true;
 let isAnalysisRunning = false;
 
@@ -522,7 +522,7 @@ app.listen(PORT, () => {
 ║     🚀 QuantumAI Server Running                 ║
 ║     📡 Port: ${PORT}                                ║
 ║     📊 Auto-monitoring: ${AUTO_SYMBOLS.length} symbols              ║
-║     ⏰ Scan every: 15 minutes                   ║
+║     ⏰ Scan every: 30 minutes                   ║
 ║     📱 Telegram: ${process.env.TELEGRAM_CHAT_ID ? 'Connected' : 'Not configured'}                     ║
 ╚══════════════════════════════════════════════════╝
   `);
@@ -532,8 +532,8 @@ app.listen(PORT, () => {
         initTelegramBot();
     }
 
-    // Auto-analysis every 15 minutes
-    cron.schedule('*/15 * * * *', () => {
+    // Auto-analysis every 30 minutes (saves API credits)
+    cron.schedule('*/30 * * * *', () => {
         runAutoAnalysis();
     });
 
@@ -543,7 +543,7 @@ app.listen(PORT, () => {
         runAutoAnalysis();
     }, 30000);
 
-    console.log('🕐 Auto-analysis: every 15 min (first scan in 30s)');
+    console.log('🕐 Auto-analysis: every 30 min (first scan in 30s)');
     console.log(`📊 Monitoring: ${AUTO_SYMBOLS.join(', ')}`);
     console.log('📱 Only BUY/SELL signals will be sent to Telegram');
 });

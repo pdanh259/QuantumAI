@@ -82,6 +82,9 @@ export function saveSignal(signal) {
 
         // Quant data snapshot
         quantScore: signal.quantScore || null,
+
+        // EA execution details
+        ticket: signal.ticket || null,
     };
 
     history.push(record);

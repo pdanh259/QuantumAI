@@ -395,11 +395,93 @@ bool ExecuteTrade(string symbol, string action, double entry, double sl, double 
     {
         Print("✅ ", action, " ", symbol, " executed! Ticket: ", result.order,
               " | Price: ", result.price, " | Volume: ", result.volume);
+
+        // Confirm trade to server so it's tracked in dashboard
+        ConfirmTradeToServer(symbol, action, result.price, sl, tp, (long)result.order, confidence);
+
         return true;
     }
 
     Print("⚠️ Unexpected retcode: ", result.retcode);
     return false;
+}
+
+//+------------------------------------------------------------------+
+//| Confirm executed trade to QuantumAI server                        |
+//+------------------------------------------------------------------+
+void ConfirmTradeToServer(string symbol, string action, double entry,
+                          double sl, double tp, long ticket, int confidence)
+{
+    string baseUrl = ServerURL;
+    if(StringGetCharacter(baseUrl, StringLen(baseUrl) - 1) == '/')
+        baseUrl = StringSubstr(baseUrl, 0, StringLen(baseUrl) - 1);
+
+    string url = baseUrl + "/api/ea/confirm";
+
+    // Build JSON payload
+    string json = "{";
+    json += "\"symbol\":\"" + symbol + "\",";
+    json += "\"action\":\"" + action + "\",";
+    json += "\"entry\":" + DoubleToString(entry, 5) + ",";
+    json += "\"sl\":" + DoubleToString(sl, 5) + ",";
+    json += "\"tp\":" + DoubleToString(tp, 5) + ",";
+    json += "\"ticket\":" + IntegerToString(ticket) + ",";
+    json += "\"confidence\":" + IntegerToString(confidence);
+    json += "}";
+
+    string response = "";
+    if(HttpPost(url, json, response))
+    {
+        Print("📡 Trade confirmed to server: ", symbol, " ", action, " Ticket:", ticket);
+    }
+    else
+    {
+        Print("⚠️ Failed to confirm trade to server (non-critical)");
+    }
+}
+
+//+------------------------------------------------------------------+
+//| HTTP POST request                                                  |
+//+------------------------------------------------------------------+
+bool HttpPost(string url, string jsonBody, string &response)
+{
+    char   postData[];
+    char   resultData[];
+    string headers = "Content-Type: application/json\r\n";
+    string resultHeaders;
+    int    timeout = 5000; // 5 seconds
+
+    StringToCharArray(jsonBody, postData, 0, WHOLE_ARRAY, CP_UTF8);
+    // Remove null terminator that StringToCharArray adds
+    ArrayResize(postData, ArraySize(postData) - 1);
+
+    ResetLastError();
+
+    int res = WebRequest(
+        "POST",
+        url,
+        headers,
+        timeout,
+        postData,
+        resultData,
+        resultHeaders
+    );
+
+    if(res == -1)
+    {
+        int err = GetLastError();
+        Print("⚠️ HttpPost error: ", err);
+        return false;
+    }
+
+    if(res != 200 && res != 201)
+    {
+        Print("⚠️ HttpPost returned HTTP ", res);
+        return false;
+    }
+
+    response = CharArrayToString(resultData, 0, WHOLE_ARRAY, CP_UTF8);
+    return true;
 }
 
 //+------------------------------------------------------------------+

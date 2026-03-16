@@ -273,13 +273,8 @@ async function runFullAnalysis(symbol) {
     cache.quantData = quantData;
     cache.lastUpdate = new Date().toISOString();
 
-    // Save signal to history for learning
-    if (signal && signal.action !== 'NO_TRADE') {
-        const savedRecord = saveSignal(signal);
-        if (savedRecord) {
-            console.log(`📝 Signal recorded: ${savedRecord.id}`);
-        }
-    }
+    // Signal is NOT saved here anymore.
+    // It will only be saved when the EA confirms execution via POST /api/ea/confirm
 
     console.log('✅ Analysis complete!');
     console.log(`📐 Quant Score: ${quantData.compositeScore?.score}/100 → ${quantData.compositeScore?.signal}`);
@@ -366,6 +361,52 @@ app.get('/api/ea/signals', (req, res) => {
         serverTime: new Date().toISOString(),
         signals
     });
+});
+
+// EA confirms a trade was actually executed on MT5
+app.post('/api/ea/confirm', express.json(), (req, res) => {
+    try {
+        const { signalId, symbol, action, entry, sl, tp, ticket, confidence } = req.body;
+
+        if (!symbol || !action || !ticket) {
+            return res.status(400).json({ success: false, error: 'Missing required fields: symbol, action, ticket' });
+        }
+
+        // Convert MT5 symbol back to API format: "XAUUSD" → "XAU/USD"
+        let apiSymbol = symbol;
+        const symMap = { XAUUSD: 'XAU/USD', BTCUSD: 'BTC/USD', EURUSD: 'EUR/USD', GBPUSD: 'GBP/USD', USDJPY: 'USD/JPY', AUDUSD: 'AUD/USD', USDCHF: 'USD/CHF', ETHUSD: 'ETH/USD' };
+        if (symMap[symbol]) apiSymbol = symMap[symbol];
+
+        // Find the matching cached signal to get full details
+        const cache = getCache(apiSymbol);
+        const cachedSignal = cache.lastSignal;
+
+        const signalToSave = {
+            symbol: apiSymbol,
+            action,
+            entry: entry || cachedSignal?.entry || 0,
+            stopLoss: sl || cachedSignal?.stopLoss || 0,
+            tp1: cachedSignal?.tp1 || tp || 0,
+            tp2: cachedSignal?.tp2 || 0,
+            confidence: confidence || cachedSignal?.confidence || 0,
+            source: cachedSignal?.source || 'ea_confirmed',
+            reasons: cachedSignal?.reasons || [],
+            marketCondition: cachedSignal?.marketCondition || null,
+            ticket: ticket,
+        };
+
+        const savedRecord = saveSignal(signalToSave);
+
+        if (savedRecord) {
+            console.log(`✅ [EA] Trade confirmed: ${symbol} ${action} Ticket:${ticket} → Saved as ${savedRecord.id}`);
+            return res.json({ success: true, recordId: savedRecord.id });
+        }
+
+        res.json({ success: true, message: 'Signal not saved (NO_TRADE or error)' });
+    } catch (error) {
+        console.error('❌ [EA] Confirm error:', error.message);
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 // ==================== SIGNAL HISTORY & PERFORMANCE ====================

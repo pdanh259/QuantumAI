@@ -306,13 +306,25 @@ bool ExecuteTrade(string symbol, string action, double entry, double sl, double 
         // Validate SL/TP direction for BUY
         if(sl >= ask)
         {
-            Print("⚠️ BUY SL (", sl, ") >= ASK (", ask, "), adjusting...");
-            sl = 0; // Let it trade without SL rather than fail
+            double slDist = MathAbs(entry - sl);
+            if(slDist > 0)
+            {
+                sl = NormalizeDouble(ask - slDist, digits);
+                Print("⚠️ BUY SL recalculated: ", sl, " (distance ", slDist, " from ask ", ask, ")");
+            }
+            else
+                sl = 0;
         }
         if(tp > 0 && tp <= ask)
         {
-            Print("⚠️ BUY TP (", tp, ") <= ASK (", ask, "), adjusting...");
-            tp = 0;
+            double tpDist = MathAbs(tp - entry);
+            if(tpDist > 0)
+            {
+                tp = NormalizeDouble(ask + tpDist, digits);
+                Print("⚠️ BUY TP recalculated: ", tp, " (distance ", tpDist, " from ask ", ask, ")");
+            }
+            else
+                tp = 0;
         }
     }
     else if(action == "SELL")
@@ -322,13 +334,25 @@ bool ExecuteTrade(string symbol, string action, double entry, double sl, double 
         // Validate SL/TP direction for SELL
         if(sl > 0 && sl <= bid)
         {
-            Print("⚠️ SELL SL (", sl, ") <= BID (", bid, "), adjusting...");
-            sl = 0;
+            double slDist = MathAbs(sl - entry);
+            if(slDist > 0)
+            {
+                sl = NormalizeDouble(bid + slDist, digits);
+                Print("⚠️ SELL SL recalculated: ", sl, " (distance ", slDist, " from bid ", bid, ")");
+            }
+            else
+                sl = 0;
         }
         if(tp >= bid)
         {
-            Print("⚠️ SELL TP (", tp, ") >= BID (", bid, "), adjusting...");
-            tp = 0;
+            double tpDist = MathAbs(entry - tp);
+            if(tpDist > 0)
+            {
+                tp = NormalizeDouble(bid - tpDist, digits);
+                Print("⚠️ SELL TP recalculated: ", tp, " (distance ", tpDist, " from bid ", bid, ")");
+            }
+            else
+                tp = 0;
         }
     }
     else

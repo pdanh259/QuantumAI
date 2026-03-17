@@ -23,6 +23,15 @@ input bool     EnableSell       = true;                        // Allow SELL tra
 input bool     UseTP2           = false;                       // Use TP2 instead of TP1
 input string   SymbolSuffix     = "";                          // Symbol suffix (e.g. ".r" for TMGM)
 
+//--- Trailing Stop Parameters
+input bool     EnableTrailing   = true;                        // Enable Trailing Stop
+input double   TrailStart1Pct   = 50.0;                        // Level 1: Start trail at % of TP
+input double   TrailSL1Pct      = 0.0;                         // Level 1: Move SL to % of TP (0 = breakeven)
+input double   TrailStart2Pct   = 75.0;                        // Level 2: Trail at % of TP
+input double   TrailSL2Pct      = 50.0;                        // Level 2: Move SL to % of TP
+input double   TrailStart3Pct   = 90.0;                        // Level 3: Trail at % of TP
+input double   TrailSL3Pct      = 75.0;                        // Level 3: Move SL to % of TP
+
 //--- Global variables
 datetime lastPollTime = 0;
 string   lastSignalIds[];    // Track processed signal IDs
@@ -80,6 +89,10 @@ void OnTimer()
 //+------------------------------------------------------------------+
 void OnTick()
 {
+    // Manage trailing stops on every tick
+    if(EnableTrailing)
+        ManageOpenTrades();
+
     // Also poll on first tick if timer hasn't fired yet
     if(lastPollTime == 0)
         PollSignals();
@@ -404,6 +417,136 @@ bool ExecuteTrade(string symbol, string action, double entry, double sl, double 
 
     Print("⚠️ Unexpected retcode: ", result.retcode);
     return false;
+}
+
+//+------------------------------------------------------------------+
+//| Manage trailing stops on all open EA trades                        |
+//+------------------------------------------------------------------+
+void ManageOpenTrades()
+{
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket == 0) continue;
+        if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+        string symbol  = PositionGetString(POSITION_SYMBOL);
+        long   posType = PositionGetInteger(POSITION_TYPE);
+        double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+        double currentSL = PositionGetDouble(POSITION_SL);
+        double currentTP = PositionGetDouble(POSITION_TP);
+
+        // Skip if no TP set (can't calculate trail levels)
+        if(currentTP <= 0) continue;
+
+        double currentPrice;
+        if(posType == POSITION_TYPE_BUY)
+            currentPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
+        else
+            currentPrice = SymbolInfoDouble(symbol, SYMBOL_ASK);
+
+        if(currentPrice <= 0) continue;
+
+        TrailPosition(ticket, symbol, posType, openPrice, currentSL, currentTP, currentPrice);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Trail a single position based on TP progress                       |
+//+------------------------------------------------------------------+
+void TrailPosition(ulong ticket, string symbol, long posType, double openPrice,
+                   double currentSL, double currentTP, double currentPrice)
+{
+    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    double minStop = SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
+
+    // Calculate TP distance in price
+    double tpDistance;
+    if(posType == POSITION_TYPE_BUY)
+        tpDistance = currentTP - openPrice;
+    else
+        tpDistance = openPrice - currentTP;
+
+    if(tpDistance <= 0) return;
+
+    // Calculate how far price has moved toward TP (as percentage)
+    double priceProgress;
+    if(posType == POSITION_TYPE_BUY)
+        priceProgress = (currentPrice - openPrice) / tpDistance * 100.0;
+    else
+        priceProgress = (openPrice - currentPrice) / tpDistance * 100.0;
+
+    // Only trail if price is moving in profit direction
+    if(priceProgress <= 0) return;
+
+    // Determine best SL level based on progress
+    double newSLPct = -1;
+    double triggerPct = 0;
+
+    if(priceProgress >= TrailStart3Pct)
+    {
+        newSLPct = TrailSL3Pct;
+        triggerPct = TrailStart3Pct;
+    }
+    else if(priceProgress >= TrailStart2Pct)
+    {
+        newSLPct = TrailSL2Pct;
+        triggerPct = TrailStart2Pct;
+    }
+    else if(priceProgress >= TrailStart1Pct)
+    {
+        newSLPct = TrailSL1Pct;
+        triggerPct = TrailStart1Pct;
+    }
+
+    if(newSLPct < 0) return; // No trailing level reached
+
+    // Calculate new SL price
+    double newSL;
+    if(posType == POSITION_TYPE_BUY)
+    {
+        newSL = openPrice + tpDistance * (newSLPct / 100.0);
+        // Ensure minimum distance from current price
+        if(minStop > 0 && currentPrice - newSL < minStop)
+            newSL = currentPrice - minStop;
+        // Only move SL upward (never lower it)
+        if(newSL <= currentSL && currentSL > 0) return;
+    }
+    else
+    {
+        newSL = openPrice - tpDistance * (newSLPct / 100.0);
+        // Ensure minimum distance from current price
+        if(minStop > 0 && newSL - currentPrice < minStop)
+            newSL = currentPrice + minStop;
+        // Only move SL downward (never raise it)
+        if(currentSL > 0 && newSL >= currentSL) return;
+    }
+
+    newSL = NormalizeDouble(newSL, digits);
+
+    // Modify position
+    MqlTradeRequest request = {};
+    MqlTradeResult  result  = {};
+
+    request.action   = TRADE_ACTION_SLTP;
+    request.position = ticket;
+    request.symbol   = symbol;
+    request.sl       = newSL;
+    request.tp       = currentTP; // Keep TP unchanged
+
+    if(OrderSend(request, result))
+    {
+        if(result.retcode == TRADE_RETCODE_DONE)
+        {
+            string level = (triggerPct == TrailStart1Pct) ? "BE" :
+                           (triggerPct == TrailStart2Pct) ? "L2" : "L3";
+            Print("🔒 [TRAIL-", level, "] ", symbol, " #", ticket,
+                  " | Progress: ", DoubleToString(priceProgress, 1), "%",
+                  " | SL: ", DoubleToString(currentSL, digits),
+                  " → ", DoubleToString(newSL, digits));
+        }
+    }
 }
 
 //+------------------------------------------------------------------+

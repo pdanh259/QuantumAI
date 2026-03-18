@@ -99,6 +99,100 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
+//| Trade transaction event - detects when trades are closed           |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                         const MqlTradeRequest &request,
+                         const MqlTradeResult &result)
+{
+    // We only care about deal additions (trade executed)
+    if(trans.type != TRADE_TRANSACTION_DEAL_ADD)
+        return;
+
+    // Get deal info
+    ulong dealTicket = trans.deal;
+    if(dealTicket == 0) return;
+
+    // Select the deal to read its properties
+    if(!HistoryDealSelect(dealTicket)) return;
+
+    // Only process OUT deals (closing trades), not IN (opening)
+    ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+    if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT)
+        return;
+
+    // Check if this deal belongs to our EA
+    long magic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
+    if(magic != MagicNumber) return;
+
+    // Get deal details
+    string symbol     = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+    double closePrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+    double profit     = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+    double volume     = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+    long   posId      = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+    string comment    = HistoryDealGetString(dealTicket, DEAL_COMMENT);
+    ENUM_DEAL_REASON reason = (ENUM_DEAL_REASON)HistoryDealGetInteger(dealTicket, DEAL_REASON);
+
+    // Determine close reason
+    string closeReason = "manual";
+    if(reason == DEAL_REASON_SL)
+        closeReason = "sl";
+    else if(reason == DEAL_REASON_TP)
+        closeReason = "tp";
+    else if(reason == DEAL_REASON_SO)
+        closeReason = "stop_out";
+    else if(StringFind(comment, "Trail") >= 0 || StringFind(comment, "trail") >= 0)
+        closeReason = "trailing";
+
+    // Remove suffix for server reporting
+    string cleanSymbol = symbol;
+    if(SymbolSuffix != "" && StringFind(symbol, SymbolSuffix) >= 0)
+    {
+        cleanSymbol = StringSubstr(symbol, 0, StringLen(symbol) - StringLen(SymbolSuffix));
+    }
+
+    Print("📊 [CLOSE] Detected: ", cleanSymbol, " | Price: ", DoubleToString(closePrice, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)),
+          " | Profit: ", DoubleToString(profit, 2),
+          " | Reason: ", closeReason,
+          " | PosID: ", posId);
+
+    // Report to server using position ID as ticket (matches what was sent on open)
+    ReportCloseToServer(cleanSymbol, (long)posId, closePrice, profit, closeReason);
+}
+
+//+------------------------------------------------------------------+
+//| Report trade closure to QuantumAI server                           |
+//+------------------------------------------------------------------+
+void ReportCloseToServer(string symbol, long ticket, double closePrice, double profit, string closeReason)
+{
+    string baseUrl = ServerURL;
+    if(StringGetCharacter(baseUrl, StringLen(baseUrl) - 1) == '/')
+        baseUrl = StringSubstr(baseUrl, 0, StringLen(baseUrl) - 1);
+
+    string url = baseUrl + "/api/ea/close";
+
+    // Build JSON payload
+    string json = "{";
+    json += "\"ticket\":" + IntegerToString(ticket) + ",";
+    json += "\"symbol\":\"" + symbol + "\",";
+    json += "\"closePrice\":" + DoubleToString(closePrice, 5) + ",";
+    json += "\"profit\":" + DoubleToString(profit, 2) + ",";
+    json += "\"closeReason\":\"" + closeReason + "\"";
+    json += "}";
+
+    string response = "";
+    if(HttpPost(url, json, response))
+    {
+        Print("📡 Trade close reported to server: ", symbol, " Ticket:", ticket, " → ", closeReason);
+    }
+    else
+    {
+        Print("⚠️ Failed to report trade close to server (non-critical)");
+    }
+}
+
+//+------------------------------------------------------------------+
 //| Main function: Poll API and process signals                        |
 //+------------------------------------------------------------------+
 void PollSignals()

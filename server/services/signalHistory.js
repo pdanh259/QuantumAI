@@ -198,6 +198,73 @@ export function updateSignalOutcome(signalId, currentPrice, symbolConfig) {
 }
 
 /**
+ * Close a signal by MT5 ticket number (called when EA reports trade closure)
+ * @param {number|string} ticket - MT5 order ticket
+ * @param {number} closePrice - Price at which the trade was closed
+ * @param {number} profit - Actual profit in account currency
+ * @param {string} closeReason - Reason: 'sl', 'tp', 'manual', 'trailing'
+ * @returns {Object|null} Updated signal record
+ */
+export function closeSignalByTicket(ticket, closePrice, profit, closeReason) {
+    const history = loadHistory();
+    const ticketStr = String(ticket);
+    const idx = history.findIndex(s => s.status === 'OPEN' && String(s.ticket) === ticketStr);
+
+    if (idx === -1) {
+        console.log(`⚠️ No open signal found for ticket ${ticket}`);
+        return null;
+    }
+
+    const record = history[idx];
+    const pipSize = getSymbolPipSize(record.symbol);
+    const isBuy = record.action === 'BUY';
+
+    // Calculate pnlPips from entry vs closePrice
+    const rawPnl = isBuy
+        ? (closePrice - record.entry) / pipSize
+        : (record.entry - closePrice) / pipSize;
+    record.pnlPips = Math.round(rawPnl * 10) / 10;
+
+    // Determine status based on closeReason
+    const reason = (closeReason || 'manual').toLowerCase();
+    if (reason.includes('sl') || reason.includes('stop loss')) {
+        record.status = 'SL_HIT';
+    } else if (reason.includes('tp') || reason.includes('take profit')) {
+        // Check if TP1 or TP2
+        if (record.tp2 && Math.abs(closePrice - record.tp2) < pipSize * 5) {
+            record.status = 'TP2_HIT';
+        } else {
+            record.status = 'TP1_HIT';
+        }
+    } else {
+        record.status = 'MANUAL_CLOSE';
+    }
+
+    record.outcome = rawPnl > 0 ? 'WIN' : rawPnl < 0 ? 'LOSS' : 'BREAKEVEN';
+    record.closePrice = closePrice;
+    record.closeReason = closeReason || 'EA reported close';
+    record.closeTime = new Date().toISOString();
+
+    history[idx] = record;
+    saveHistory(history);
+
+    console.log(`📌 Signal closed by ticket ${ticket}: ${record.symbol} ${record.action} → ${record.status} | ${record.pnlPips > 0 ? '+' : ''}${record.pnlPips} pips`);
+    return record;
+}
+
+/**
+ * Helper: get pip size for a symbol
+ */
+function getSymbolPipSize(symbol) {
+    const sym = (symbol || '').toUpperCase();
+    if (sym.includes('XAU')) return 0.1;
+    if (sym.includes('JPY')) return 0.01;
+    if (sym.includes('BTC')) return 1;
+    if (sym.includes('ETH')) return 0.1;
+    return 0.0001;
+}
+
+/**
  * Get open signals for a given symbol
  */
 export function getOpenSignals(symbol = null) {

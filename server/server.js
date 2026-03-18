@@ -13,7 +13,7 @@ import { runTechnicalAnalysis } from './analysis/technicalAnalysis.js';
 import { generateSignal } from './analysis/aiEngine.js';
 import { runQuantAnalysis } from './analysis/quantAnalysis.js';
 import { sendTelegramSignal, sendTelegramMessage, initTelegramBot } from './services/telegramBot.js';
-import { saveSignal, updateSignalOutcome, getOpenSignals, calculatePerformanceStats, calculatePeriodStats, getSignalHistory, generateLearningContext } from './services/signalHistory.js';
+import { saveSignal, updateSignalOutcome, getOpenSignals, closeSignalByTicket, calculatePerformanceStats, calculatePeriodStats, getSignalHistory, generateLearningContext } from './services/signalHistory.js';
 
 dotenv.config();
 
@@ -405,6 +405,29 @@ app.post('/api/ea/confirm', express.json(), (req, res) => {
         res.json({ success: true, message: 'Signal not saved (NO_TRADE or error)' });
     } catch (error) {
         console.error('❌ [EA] Confirm error:', error.message);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// EA reports a trade was closed on MT5
+app.post('/api/ea/close', express.json(), (req, res) => {
+    try {
+        const { ticket, symbol, closePrice, profit, closeReason } = req.body;
+
+        if (!ticket) {
+            return res.status(400).json({ success: false, error: 'Missing required field: ticket' });
+        }
+
+        const updated = closeSignalByTicket(ticket, closePrice, profit, closeReason);
+
+        if (updated) {
+            console.log(`✅ [EA] Trade closed: Ticket:${ticket} ${updated.symbol} → ${updated.status} (${updated.pnlPips > 0 ? '+' : ''}${updated.pnlPips} pips)`);
+            return res.json({ success: true, signal: { id: updated.id, status: updated.status, pnlPips: updated.pnlPips } });
+        }
+
+        res.json({ success: true, message: 'No matching open signal found for ticket' });
+    } catch (error) {
+        console.error('❌ [EA] Close error:', error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });

@@ -243,16 +243,19 @@ function parseAIResponse(text, symbol, currentPrice) {
             const isSell = parsed.action === 'SELL';
             const slDistance = Math.abs(entry - stopLoss);
             const tp1Distance = Math.abs(tp1 - entry);
+            const tp2Distance = tp2 ? Math.abs(tp2 - entry) : tp1Distance * 2;
             
-            if (tp1Distance > 0 && slDistance > tp1Distance * 1.5) {
-                // Cap SL distance at 1.5x TP1 distance (Risk:Reward 1.5 : 1 maximum)
-                const maxSlDistance = tp1Distance * 1.5;
+            // Maximum SL should be equal to TP1 distance (Risk 1 : Reward 1 for TP1)
+            // and at most half of TP2 distance (Risk 1 : Reward 2 for TP2)
+            const maxSlDistance = Math.min(tp1Distance, tp2Distance / 2);
+            
+            if (slDistance > maxSlDistance && maxSlDistance > 0) {
                 if (isBuy) {
                     stopLoss = entry - maxSlDistance;
                 } else if (isSell) {
                     stopLoss = entry + maxSlDistance;
                 }
-                const warningMsg = `Auto-adjusted SL from ${parsed.stopLoss} to ${round(stopLoss)} due to poor R:R`;
+                const warningMsg = `Auto-adjusted SL from ${parsed.stopLoss} to ${round(stopLoss)} to strictly enforce R:R of 1:1 (TP1) and 1:2 (TP2)`;
                 console.log(`⚠️ ${symbol}: ${warningMsg}`);
                 
                 // Add to warnings

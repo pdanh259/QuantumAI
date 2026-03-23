@@ -233,17 +233,44 @@ function parseAIResponse(text, symbol, currentPrice) {
         // Calculate pips (for gold, 1 pip = 0.1)
         const pipSize = 0.1;
         const entry = parsed.entry || currentPrice;
+        let stopLoss = parsed.stopLoss;
+        let tp1 = parsed.tp1;
+        let tp2 = parsed.tp2;
+
+        // Post-processing: Correct skewed SL/TP logic
+        if (entry && stopLoss && tp1 && (parsed.action === 'BUY' || parsed.action === 'SELL')) {
+            const isBuy = parsed.action === 'BUY';
+            const isSell = parsed.action === 'SELL';
+            const slDistance = Math.abs(entry - stopLoss);
+            const tp1Distance = Math.abs(tp1 - entry);
+            
+            if (tp1Distance > 0 && slDistance > tp1Distance * 1.5) {
+                // Cap SL distance at 1.5x TP1 distance (Risk:Reward 1.5 : 1 maximum)
+                const maxSlDistance = tp1Distance * 1.5;
+                if (isBuy) {
+                    stopLoss = entry - maxSlDistance;
+                } else if (isSell) {
+                    stopLoss = entry + maxSlDistance;
+                }
+                const warningMsg = `Auto-adjusted SL from ${parsed.stopLoss} to ${round(stopLoss)} due to poor R:R`;
+                console.log(`⚠️ ${symbol}: ${warningMsg}`);
+                
+                // Add to warnings
+                if (!parsed.warnings) parsed.warnings = [];
+                parsed.warnings.push(warningMsg);
+            }
+        }
 
         return {
             symbol,
             action: parsed.action || 'NO_TRADE',
             entry: round(entry),
-            stopLoss: round(parsed.stopLoss),
-            tp1: round(parsed.tp1),
-            tp2: round(parsed.tp2),
-            slPips: parsed.stopLoss ? round(Math.abs(entry - parsed.stopLoss) / pipSize) : null,
-            tp1Pips: parsed.tp1 ? round(Math.abs(parsed.tp1 - entry) / pipSize) : null,
-            tp2Pips: parsed.tp2 ? round(Math.abs(parsed.tp2 - entry) / pipSize) : null,
+            stopLoss: round(stopLoss),
+            tp1: round(tp1),
+            tp2: round(tp2),
+            slPips: stopLoss ? round(Math.abs(entry - stopLoss) / pipSize) : null,
+            tp1Pips: tp1 ? round(Math.abs(tp1 - entry) / pipSize) : null,
+            tp2Pips: tp2 ? round(Math.abs(tp2 - entry) / pipSize) : null,
             confidence: parsed.confidence || 0,
             riskReward: parsed.riskReward || 'N/A',
             reasons: parsed.reasons || [],

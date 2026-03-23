@@ -342,8 +342,10 @@ app.get('/api/ea/signals', (req, res) => {
             const sig = cache.lastSignal;
             // Convert symbol format: "XAU/USD" → "XAUUSD" for MT5
             const mt5Symbol = symInfo.symbol.replace('/', '');
+            // Use stable timestamp to prevent EA from re-entering old trades due to cache updates
+            const stableTime = cache.lastSignal.timestamp || cache.lastUpdate;
             signals.push({
-                signalId: `${mt5Symbol}_${cache.lastUpdate}`,
+                signalId: `${mt5Symbol}_${stableTime}`,
                 symbol: mt5Symbol,
                 action: sig.action,             // "BUY" or "SELL"
                 entry: sig.entry || 0,

@@ -11,7 +11,8 @@
 
 //--- Input Parameters
 input string   ServerURL        = "http://YOUR_VPS_IP:3001";  // QuantumAI Server URL
-input double   LotSize          = 0.10;                        // Lot Size
+input double   RiskPercent      = 1.0;                         // Risk % per Trade (0 = Fixed Lot)
+input double   FixedLotSize     = 0.10;                        // Fixed Lot Size (if Risk = 0)
 input int      MagicNumber      = 888888;                      // Magic Number
 input int      PollIntervalSec  = 60;                          // Poll interval (seconds)
 input int      MaxTradesPerSymbol = 1;                         // Max open trades per symbol
@@ -45,7 +46,10 @@ int OnInit()
     Print("╔══════════════════════════════════════════════╗");
     Print("║   🤖 QuantumAI AutoTrader v1.0              ║");
     Print("║   📡 Server: ", ServerURL, "                 ");
-    Print("║   💰 Lot: ", DoubleToString(LotSize, 2), "   ");
+    if(RiskPercent > 0)
+        Print("║   💰 Risk: ", DoubleToString(RiskPercent, 1), " % / Trade ");
+    else
+        Print("║   💰 Lot: ", DoubleToString(FixedLotSize, 2), " (Fixed)  ");
     Print("║   🔧 Magic: ", MagicNumber, "                ");
     Print("╚══════════════════════════════════════════════╝");
 
@@ -386,7 +390,35 @@ bool ExecuteTrade(string symbol, string action, double entry, double sl, double 
 
     request.action    = TRADE_ACTION_DEAL;
     request.symbol    = symbol;
-    request.volume    = LotSize;
+    
+    // Calculate Dynamic Lot Size
+    double lot = FixedLotSize;
+    if(RiskPercent > 0 && sl > 0)
+    {
+        double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+        double riskAmount = balance * (RiskPercent / 100.0);
+        double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+        double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        
+        double slPoints = MathAbs(entry - sl) / point;
+        if(slPoints > 0 && tickValue > 0 && tickSize > 0)
+        {
+            double tickRisk = slPoints * (tickSize / point) * tickValue;
+            if(tickRisk > 0)
+            {
+                double calcLot = riskAmount / tickRisk;
+                double minLot  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+                double maxLot  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+                double stepLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+                
+                lot = MathFloor(calcLot / stepLot) * stepLot;
+                if(lot < minLot) lot = minLot;
+                if(lot > maxLot) lot = maxLot;
+            }
+        }
+    }
+    request.volume    = lot;
     request.magic     = MagicNumber;
     request.deviation = Slippage;
     request.comment   = "QAI|" + signalId;
@@ -476,7 +508,7 @@ bool ExecuteTrade(string symbol, string action, double entry, double sl, double 
 
     Print("📤 Placing ", action, " ", symbol, " @ ", request.price,
           " | SL: ", sl, " | TP: ", tp,
-          " | Lot: ", LotSize, " | Conf: ", confidence, "%");
+          " | Lot: ", DoubleToString(request.volume, 2), " | Conf: ", confidence, "%");
 
     if(!OrderSend(request, result))
     {

@@ -337,12 +337,32 @@ function generateFallbackSignal(symbol, technicalData, marketData, quantData) {
         atr = currentPrice * 0.002;
     }
 
+    // ========== HARD NEWS FILTER ==========
+    if (marketData.calendar && marketData.calendar.length > 0) {
+        const now = new Date();
+        const upcomingHighImpact = marketData.calendar.find(e => {
+            if (e.impact === 'high') {
+                const eventTime = new Date(e.time);
+                const diffMins = Math.abs(eventTime - now) / (1000 * 60);
+                return diffMins <= 30; // within 30 mins
+            }
+            return false;
+        });
+
+        if (upcomingHighImpact) {
+            return createNoTradeSignal(symbol, 
+                `Bảo vệ tài khoản: Tạm dừng do có tin tức Đỏ (${upcomingHighImpact.event}) trong vòng 30 phút`
+            );
+        }
+    }
+
     // ========== MULTI-TIMEFRAME CONFIRMATION ==========
+    // STRICT MTF: Require 3/3 timeframe agreement
     const mtf = analyzeMultiTimeframe(technicalData);
 
-    if (!mtf.hasConsensus) {
+    if (mtf.agreement < 3) {
         return createNoTradeSignal(symbol,
-            `MTF xung đột: H1=${mtf.h1Dir}, H4=${mtf.h4Dir}, D1=${mtf.d1Dir}`
+            `MTF không đồng thuận tuyệt đối (chỉ ${mtf.agreement}/3): H1=${mtf.h1Dir}, H4=${mtf.h4Dir}, D1=${mtf.d1Dir}`
         );
     }
 
@@ -352,6 +372,13 @@ function generateFallbackSignal(symbol, technicalData, marketData, quantData) {
     // ========== QUANT VALIDATION ==========
     const quantScore = quantData?.compositeScore?.score || null;
     const quantSignal = quantData?.compositeScore?.signal || null;
+    
+    // QUANT VETO: Reject if score is too low
+    if (quantScore !== null && quantScore < 45) {
+        return createNoTradeSignal(symbol,
+            `Quant Score quá yếu (${quantScore}/100) - Rủi ro nhiễu cao`
+        );
+    }
 
     let finalAction;
     let confidence;

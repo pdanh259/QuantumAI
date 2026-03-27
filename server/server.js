@@ -618,11 +618,9 @@ app.listen(PORT, () => {
         initTelegramBot();
     }
 
-    // ★ Quét 3 phiên giao dịch mỗi ngày (giờ Việt Nam)
-    // Asian open: 08:00 | London open: 14:00 | New York open: 20:00
-    cron.schedule('0 8 * * 1-5',  () => runAutoAnalysis()); // Asian
-    cron.schedule('0 14 * * 1-5', () => runAutoAnalysis()); // London
-    cron.schedule('0 20 * * 1-5', () => runAutoAnalysis()); // New York
+    // ★ Quét tự động liên tục (mỗi 15 phút)
+    // Hệ thống sẽ tự động vào lệnh khi điều kiện thỏa mãn và chưa vượt quá MAX_TRADES_PER_DAY
+    cron.schedule('*/15 * * * *',  () => runAutoAnalysis());
 
     // Run first scan 30s after boot
     setTimeout(() => {
@@ -630,7 +628,8 @@ app.listen(PORT, () => {
         runAutoAnalysis();
     }, 30000);
 
-    console.log(`⏰ Auto-analysis: 3 phiên/ngày – 08:00 Asian | 14:00 London | 20:00 NY (giờ VN)`);
+    console.log(`⏰ Auto-analysis: Liên tục mỗi 15 phút (chờ đủ điều kiện để vào lệnh)`);
+
     console.log(`📊 Tối đa ${MAX_TRADES_PER_DAY} lệnh/ngày/cặp tiền (MAX_TRADES_PER_DAY)`);
     console.log(`📊 Monitoring: ${AUTO_SYMBOLS.join(', ')}`);
     console.log('📱 Only BUY/SELL signals will be sent to Telegram');

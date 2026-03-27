@@ -48,9 +48,16 @@ export async function generateSignal({ symbol, marketData, technicalData, quantD
  * Build comprehensive analysis prompt for Gemini
  */
 function buildAnalysisPrompt({ symbol, currentPrice, technicalData, quantData, news, calendar, intermarket, sentiment }) {
-    let prompt = `Bạn là một chuyên gia phân tích Forex chuyên nghiệp. Hãy phân tích dữ liệu sau và đưa ra đề xuất giao dịch.
+    let prompt = `Bạn là một chuyên gia phân tích Forex chuyên nghiệp, chuyên giao dịch INTRADAY.
 
 ⚠️ QUAN TRỌNG: Trả lời ĐÚNG THEO FORMAT JSON bên dưới, KHÔNG thêm markdown code block.
+
+🎯 CHIẾN LƯỢC INTRADAY:
+- H4 xác định xu hướng chính trong ngày (BẮT BUỘC)
+- H1 xác nhận điểm vào lệnh cụ thể (BẮT BUỘC)
+- D1 chỉ là context tổng quan (KHÔNG bắt buộc đồng thuận)
+- Nếu H4 và H1 đồng thuận → vào lệnh, D1 ngược chỉ làm giảm confidence
+- Ưu tiên phiên London (14:00-20:00 VN) và NY (20:00-02:00 VN) cho XAU/USD
 
 📊 THÔNG TIN THỊ TRƯỜNG:
 - Cặp tiền: ${symbol}
@@ -356,13 +363,20 @@ function generateFallbackSignal(symbol, technicalData, marketData, quantData) {
         }
     }
 
-    // ========== MULTI-TIMEFRAME CONFIRMATION ==========
-    // STRICT MTF: Require 3/3 timeframe agreement
+    // ========== MULTI-TIMEFRAME CONFIRMATION (INTRADAY MODE) ==========
+    // INTRADAY: H4 + H1 phải đồng thuận (bắt buộc), D1 là context filter
     const mtf = analyzeMultiTimeframe(technicalData);
 
-    if (mtf.agreement < 3) {
+    if (!mtf.h4h1Agreement) {
         return createNoTradeSignal(symbol,
-            `MTF không đồng thuận tuyệt đối (chỉ ${mtf.agreement}/3): H1=${mtf.h1Dir}, H4=${mtf.h4Dir}, D1=${mtf.d1Dir}`
+            `H4+H1 không đồng thuận: H1=${mtf.h1Dir}, H4=${mtf.h4Dir}, D1=${mtf.d1Dir} (context)`
+        );
+    }
+
+    // H4 hoặc H1 sideways → không vào
+    if (mtf.h4Dir === 'SIDE' || mtf.h1Dir === 'SIDE') {
+        return createNoTradeSignal(symbol,
+            `Không có xu hướng rõ: H1=${mtf.h1Dir}, H4=${mtf.h4Dir}`
         );
     }
 
@@ -444,7 +458,7 @@ function generateFallbackSignal(symbol, technicalData, marketData, quantData) {
         confidence,
         riskReward: '1:2',
         reasons: [
-            `MTF: H1=${mtf.h1Dir} | H4=${mtf.h4Dir} | D1=${mtf.d1Dir} (${mtf.agreement}/3)`,
+            `MTF: H4=${mtf.h4Dir} | H1=${mtf.h1Dir} | D1=${mtf.d1Dir} [context:${mtf.d1Alignment}]`,
             `Bias H1: ${h1.bias?.summary || 'N/A'}`,
             `RSI(14): ${h1.momentum?.rsi?.value} (${h1.momentum?.rsi?.condition})`,
             `EMA: ${h1.trend?.emaAlignment}`,
@@ -464,7 +478,9 @@ function generateFallbackSignal(symbol, technicalData, marketData, quantData) {
 }
 
 /**
- * Analyze bias across multiple timeframes and determine consensus
+ * Analyze bias across multiple timeframes - INTRADAY MODE
+ * H4 + H1 are MANDATORY entry conditions.
+ * D1 is a context filter that adjusts confidence only.
  */
 function analyzeMultiTimeframe(technicalData) {
     const h1 = technicalData?.H1;
@@ -482,45 +498,55 @@ function analyzeMultiTimeframe(technicalData) {
     const h4Dir = getDirection(h4);
     const d1Dir = getDirection(d1);
 
-    let bullishCount = 0, bearishCount = 0, availableCount = 0;
+    // ---- H4 + H1 must agree (bắt buộc) ----
+    const h4h1Agreement = (h4Dir !== 'NONE' && h1Dir !== 'NONE' && h4Dir === h1Dir);
 
-    for (const dir of [h1Dir, h4Dir, d1Dir]) {
-        if (dir === 'NONE') continue;
-        availableCount++;
-        if (dir === 'BULL') bullishCount++;
-        if (dir === 'BEAR') bearishCount++;
+    // Determine direction from H4+H1
+    let direction = 'NONE';
+    if (h4h1Agreement) {
+        direction = h4Dir === 'BULL' ? 'BULLISH' : h4Dir === 'BEAR' ? 'BEARISH' : 'NONE';
     }
 
-    if (availableCount < 2) {
-        if (h1Dir === 'BULL' || h1Dir === 'BEAR') {
-            return {
-                direction: h1Dir === 'BULL' ? 'BULLISH' : 'BEARISH',
-                hasConsensus: true, agreement: 1,
-                h1Dir, h4Dir, d1Dir, confidence: 45,
-            };
-        }
-        return { direction: 'NONE', hasConsensus: false, agreement: 0, h1Dir, h4Dir, d1Dir, confidence: 0 };
-    }
+    // ---- Base confidence from H4+H1 strength ----
+    let confidence = 60; // base when H4+H1 agree
 
-    const hasConsensus = bullishCount >= 2 || bearishCount >= 2;
-    const direction = bullishCount >= 2 ? 'BULLISH' : bearishCount >= 2 ? 'BEARISH' : 'MIXED';
-    const agreement = Math.max(bullishCount, bearishCount);
+    // ADX H4 amplifier
+    if (h4?.trend?.adx?.trendStrength === 'strong') confidence += 8;
+    else if (h4?.trend?.adx?.trendStrength === 'moderate') confidence += 3;
 
-    let confidence;
-    if (agreement === 3) confidence = 75;
-    else if (agreement === 2 && availableCount === 3) confidence = 60;
-    else if (agreement === 2 && availableCount === 2) confidence = 55;
-    else confidence = 40;
-
+    // ADX H1 amplifier
     if (h1?.trend?.adx?.trendStrength === 'strong') confidence += 5;
 
+    // ---- D1 context filter (not mandatory but adjusts confidence) ----
+    let d1Alignment = 'neutral';
+    if (d1Dir !== 'NONE' && d1Dir !== 'SIDE') {
+        if (d1Dir === h4Dir) {
+            confidence += 10;  // D1 xác nhận cùng chiều → boost
+            d1Alignment = 'aligned';
+        } else {
+            confidence -= 15; // D1 ngược chiều → cảnh báo
+            d1Alignment = 'counter';
+        }
+    }
+
+    // RSI extreme filter (H1)
     const rsi = h1?.momentum?.rsi?.value;
     if (rsi) {
         if (direction === 'BULLISH' && rsi > 75) confidence -= 10;
         if (direction === 'BEARISH' && rsi < 25) confidence -= 10;
     }
 
-    return { direction, hasConsensus, agreement, h1Dir, h4Dir, d1Dir, confidence };
+    confidence = Math.min(90, Math.max(0, confidence));
+
+    return {
+        direction,
+        h4h1Agreement,
+        agreement: h4h1Agreement ? 2 : 0, // kept for logging compat
+        hasConsensus: h4h1Agreement,
+        h1Dir, h4Dir, d1Dir,
+        d1Alignment,
+        confidence
+    };
 }
 
 /**

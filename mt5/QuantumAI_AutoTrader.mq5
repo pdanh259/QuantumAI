@@ -21,7 +21,8 @@ input int      MinConfidence    = 60;                          // Minimum confid
 input int      Slippage         = 30;                          // Max slippage (points)
 input bool     EnableBuy        = true;                        // Allow BUY trades
 input bool     EnableSell       = true;                        // Allow SELL trades
-input bool     UseTP2           = false;                       // Use TP2 instead of TP1
+input bool     UseTP2           = false;                       // Use TP2 instead of TP1 (if Scale-Out is off)
+input bool     EnableScaleOut   = true;                        // Enable Scale-Out (50% TP1, 50% TP2)
 input string   SymbolSuffix     = "";                          // Symbol suffix (e.g. ".r" for TMGM)
 
 //--- Trailing Stop Parameters
@@ -370,9 +371,8 @@ void ProcessSignals(string json)
             continue;
         }
 
-        // Execute trade
-        double tp = UseTP2 ? tp2 : tp1;
-        if(ExecuteTrade(mt5Symbol, action, entry, sl, tp, conf, signalId))
+        // Execute Trade or Scale-Out
+        if(ExecuteSignal(mt5Symbol, action, entry, sl, tp1, tp2, conf, signalId))
         {
             MarkSignalProcessed(signalId);
         }
@@ -380,19 +380,13 @@ void ProcessSignals(string json)
 }
 
 //+------------------------------------------------------------------+
-//| Execute a trade                                                    |
+//| Calculate Lot Size and Decide to Split Order or Single Order       |
 //+------------------------------------------------------------------+
-bool ExecuteTrade(string symbol, string action, double entry, double sl, double tp,
-                  int confidence, string signalId)
+bool ExecuteSignal(string symbol, string action, double entry, double sl, double tp1, double tp2, 
+                   int confidence, string signalId)
 {
-    MqlTradeRequest request = {};
-    MqlTradeResult  result  = {};
-
-    request.action    = TRADE_ACTION_DEAL;
-    request.symbol    = symbol;
-    
-    // Calculate Dynamic Lot Size
-    double lot = FixedLotSize;
+    // 1. Calculate the TOTAL Dynamic Lot Size
+    double totalLot = FixedLotSize;
     if(RiskPercent > 0 && sl > 0)
     {
         double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -408,17 +402,55 @@ bool ExecuteTrade(string symbol, string action, double entry, double sl, double 
             if(tickRisk > 0)
             {
                 double calcLot = riskAmount / tickRisk;
+                double stepLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
                 double minLot  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
                 double maxLot  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
-                double stepLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
                 
-                lot = MathFloor(calcLot / stepLot) * stepLot;
-                if(lot < minLot) lot = minLot;
-                if(lot > maxLot) lot = maxLot;
+                totalLot = MathFloor(calcLot / stepLot) * stepLot;
+                if(totalLot < minLot) totalLot = minLot;
+                if(totalLot > maxLot) totalLot = maxLot;
             }
         }
     }
-    request.volume    = lot;
+
+    // 2. Decide if Scale-Out is possible
+    bool success = false;
+    double stepLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+    double minLot  = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+    
+    if(EnableScaleOut && totalLot >= minLot * 2 && totalLot >= stepLot * 2)
+    {
+        double lot1 = MathFloor((totalLot / 2.0) / stepLot) * stepLot;
+        double lot2 = totalLot - lot1;
+        
+        Print("🔀 Scale-Out Activated: Splitting ", DoubleToString(totalLot, 2), " lots into ", 
+              DoubleToString(lot1, 2), " (TP1) & ", DoubleToString(lot2, 2), " (TP2)");
+              
+        bool ok1 = ExecuteTrade(symbol, action, entry, sl, tp1, lot1, confidence, signalId + "_T1");
+        bool ok2 = ExecuteTrade(symbol, action, entry, sl, tp2, lot2, confidence, signalId + "_T2");
+        success = (ok1 || ok2);
+    }
+    else
+    {
+        double targetTp = UseTP2 ? tp2 : tp1;
+        success = ExecuteTrade(symbol, action, entry, sl, targetTp, totalLot, confidence, signalId);
+    }
+    
+    return success;
+}
+
+//+------------------------------------------------------------------+
+//| Execute a single trade (Core execution logic)                      |
+//+------------------------------------------------------------------+
+bool ExecuteTrade(string symbol, string action, double entry, double sl, double tp, 
+                  double lotSize, int confidence, string signalId)
+{
+    MqlTradeRequest request = {};
+    MqlTradeResult  result  = {};
+
+    request.action    = TRADE_ACTION_DEAL;
+    request.symbol    = symbol;
+    request.volume    = lotSize;
     request.magic     = MagicNumber;
     request.deviation = Slippage;
     request.comment   = "QAI|" + signalId;

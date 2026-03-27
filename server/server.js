@@ -482,8 +482,22 @@ app.get('*', (req, res) => {
 
 // ==================== AUTO-ANALYSIS CRON ====================
 const AUTO_SYMBOLS = ['XAU/USD', 'BTC/USD'];  // Reduced to save API credits
+const MAX_TRADES_PER_DAY = parseInt(process.env.MAX_TRADES_PER_DAY || '3', 10); // Default: 3 lệnh/ngày
 let autoAnalysisEnabled = true;
 let isAnalysisRunning = false;
+
+/**
+ * Đếm số lệnh đã vào trong ngày hôm nay (chỉ tính OPEN hoặc closed signals cùng ngày)
+ */
+function countTodaySignals(symbol) {
+    const history = getSignalHistory(200, symbol);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    return history.filter(s => {
+        const ts = new Date(s.timestamp);
+        return ts >= todayStart && s.action !== 'NO_TRADE';
+    }).length;
+}
 
 async function runAutoAnalysis() {
     if (!autoAnalysisEnabled || isAnalysisRunning) return;
@@ -505,7 +519,13 @@ async function runAutoAnalysis() {
 
     for (const symbol of AUTO_SYMBOLS) {
         try {
-            console.log(`\n🔄 [AUTO] Analyzing ${symbol}...`);
+            // ---- Kiểm tra giới hạn lệnh mỗi ngày ----
+            const todayCount = countTodaySignals(symbol);
+            if (todayCount >= MAX_TRADES_PER_DAY) {
+                console.log(`⏭️ [AUTO] ${symbol} → Đã đủ ${todayCount}/${MAX_TRADES_PER_DAY} lệnh hôm nay, bỏ qua.`);
+                continue;
+            }
+            console.log(`\n🔄 [AUTO] Analyzing ${symbol}... (Hôm nay: ${todayCount}/${MAX_TRADES_PER_DAY} lệnh)`);
             const result = await runFullAnalysis(symbol);
 
             if (hasTelegram && result.signal && result.signal.action !== 'NO_TRADE') {
@@ -587,8 +607,8 @@ app.listen(PORT, () => {
 ╔══════════════════════════════════════════════════╗
 ║     🚀 QuantumAI Server Running                 ║
 ║     📡 Port: ${PORT}                                ║
-║     📊 Auto-monitoring: ${AUTO_SYMBOLS.length} symbols              ║
-║     ⏰ Scan every: 30 minutes                   ║
+║     📊 Monitoring: ${AUTO_SYMBOLS.length} symbols (Intraday Mode)    ║
+║     ⏰ Scan: 08h Asian | 14h London | 20h NY    ║
 ║     📱 Telegram: ${process.env.TELEGRAM_CHAT_ID ? 'Connected' : 'Not configured'}                     ║
 ╚══════════════════════════════════════════════════╝
   `);
@@ -598,18 +618,20 @@ app.listen(PORT, () => {
         initTelegramBot();
     }
 
-    // Auto-analysis every 30 minutes (saves API credits)
-    cron.schedule('*/30 * * * *', () => {
-        runAutoAnalysis();
-    });
+    // ★ Quét 3 phiên giao dịch mỗi ngày (giờ Việt Nam)
+    // Asian open: 08:00 | London open: 14:00 | New York open: 20:00
+    cron.schedule('0 8 * * 1-5',  () => runAutoAnalysis()); // Asian
+    cron.schedule('0 14 * * 1-5', () => runAutoAnalysis()); // London
+    cron.schedule('0 20 * * 1-5', () => runAutoAnalysis()); // New York
 
-    // Run first scan 30s after boot (let APIs warm up)
+    // Run first scan 30s after boot
     setTimeout(() => {
         console.log('🚀 Running initial scan...');
         runAutoAnalysis();
     }, 30000);
 
-    console.log('🕐 Auto-analysis: every 30 min (first scan in 30s)');
+    console.log(`⏰ Auto-analysis: 3 phiên/ngày – 08:00 Asian | 14:00 London | 20:00 NY (giờ VN)`);
+    console.log(`📊 Tối đa ${MAX_TRADES_PER_DAY} lệnh/ngày/cặp tiền (MAX_TRADES_PER_DAY)`);
     console.log(`📊 Monitoring: ${AUTO_SYMBOLS.join(', ')}`);
     console.log('📱 Only BUY/SELL signals will be sent to Telegram');
 });

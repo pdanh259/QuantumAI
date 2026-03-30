@@ -5,13 +5,40 @@ dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+// ===== AI CALL CACHE (prevent quota exhaustion) =====
+// Cache AI results per symbol for AI_CACHE_MINUTES minutes
+// Default: 120 minutes (2 hours) → max 24 API calls/day for 2 symbols
+const AI_CACHE_MINUTES = parseInt(process.env.AI_CACHE_MINUTES || '120', 10);
+const aiCache = {}; // { symbol: { signal, timestamp } }
+
+function getCachedSignal(symbol) {
+    const entry = aiCache[symbol];
+    if (!entry) return null;
+    const ageMs = Date.now() - entry.timestamp;
+    if (ageMs < AI_CACHE_MINUTES * 60 * 1000) {
+        console.log(`💾 [AI Cache] ${symbol} → Using cached AI signal (age: ${Math.round(ageMs / 60000)}m / ${AI_CACHE_MINUTES}m TTL)`);
+        return entry.signal;
+    }
+    return null; // cache expired
+}
+
+function setCachedSignal(symbol, signal) {
+    aiCache[symbol] = { signal, timestamp: Date.now() };
+    console.log(`💾 [AI Cache] ${symbol} → Signal cached for ${AI_CACHE_MINUTES} minutes`);
+}
+
+
 /**
  * Generate AI trading signal using Gemini Pro
  * Aggregates all data sources and uses structured prompt engineering
  */
 export async function generateSignal({ symbol, marketData, technicalData, quantData, news, calendar, intermarket, sentiment }) {
+    // ---- Check AI cache first ----
+    const cached = getCachedSignal(symbol);
+    if (cached) return cached;
+
     try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
         const currentPrice = marketData.pricesH1.length > 0 ?
             marketData.pricesH1[marketData.pricesH1.length - 1].close : 0;
@@ -35,9 +62,23 @@ export async function generateSignal({ symbol, marketData, technicalData, quantD
         // Parse AI response into structured signal
         const signal = parseAIResponse(text, symbol, currentPrice);
 
+        // Cache successful AI result
+        setCachedSignal(symbol, signal);
+
         return signal;
     } catch (error) {
-        console.error('AI Engine error:', error.message);
+        console.error('❌ AI Engine error:', error.message);
+        if (error.status) console.error('   HTTP Status:', error.status);
+        if (error.errorDetails) console.error('   Error Details:', JSON.stringify(error.errorDetails));
+        if (error.message?.includes('quota') || error.message?.includes('429')) {
+            console.error('   ⚠️ QUOTA EXCEEDED: Gemini API quota đã hết!');
+        }
+        if (error.message?.includes('API_KEY') || error.message?.includes('401') || error.message?.includes('403')) {
+            console.error('   ⚠️ API KEY ERROR: Kiểm tra lại GEMINI_API_KEY!');
+        }
+        if (error.message?.includes('not found') || error.message?.includes('404')) {
+            console.error('   ⚠️ MODEL NOT FOUND: Model name không đúng!');
+        }
 
         // Fallback: generate signal from technical analysis alone
         return generateFallbackSignal(symbol, technicalData, marketData, quantData);

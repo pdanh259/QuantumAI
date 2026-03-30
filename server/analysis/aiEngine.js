@@ -38,7 +38,7 @@ export async function generateSignal({ symbol, marketData, technicalData, quantD
     if (cached) return cached;
 
     try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
 
         const currentPrice = marketData.pricesH1.length > 0 ?
             marketData.pricesH1[marketData.pricesH1.length - 1].close : 0;

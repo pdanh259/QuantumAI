@@ -38,7 +38,6 @@ const SUPPORTED_SYMBOLS = [
     { symbol: 'USD/JPY', name: 'USD/Yen', type: 'forex', icon: '💴' },
     { symbol: 'AUD/USD', name: 'AUD/USD', type: 'forex', icon: '🇦🇺' },
     { symbol: 'USD/CHF', name: 'USD/CHF', type: 'forex', icon: '🇨🇭' },
-    { symbol: 'GBP/USD', name: 'Pound/USD', type: 'forex', icon: '💷' },
     { symbol: 'ETH/USD', name: 'Ethereum', type: 'crypto', icon: 'Ξ' },
 ];
 

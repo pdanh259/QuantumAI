@@ -15,7 +15,8 @@ const DEFAULT_SYMBOLS = [
     { symbol: 'EUR/USD', name: 'Euro/USD', type: 'forex', icon: '💶' },
     { symbol: 'GBP/USD', name: 'Pound/USD', type: 'forex', icon: '💷' },
     { symbol: 'USD/JPY', name: 'USD/Yen', type: 'forex', icon: '💴' },
-    { symbol: 'BTC/USD', name: 'Bitcoin', type: 'crypto', icon: '₿' },
+
+
     { symbol: 'ETH/USD', name: 'Ethereum', type: 'crypto', icon: 'Ξ' },
 ];
 

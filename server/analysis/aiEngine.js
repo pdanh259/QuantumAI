@@ -604,10 +604,7 @@ function getSymbolConfig(symbol, currentPrice) {
     if (sym.includes('JPY')) {
         return { pipSize: 0.01, decimals: 3 };
     }
-    // Crypto
-    if (sym.includes('BTC')) {
-        return { pipSize: 1, decimals: 2 };
-    }
+    // GBP/USD uses standard forex pip size — falls through to default below
     if (sym.includes('ETH')) {
         return { pipSize: 0.1, decimals: 2 };
     }

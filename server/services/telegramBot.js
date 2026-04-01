@@ -40,7 +40,7 @@ export function initTelegramBot() {
                 `📊 *QuantumAI Status*\n\n` +
                 `✅ Server: Online\n` +
                 `⏰ Time: ${new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}\n` +
-                `📈 Monitoring: XAU/USD, BTC/USD, ETH/USD, EUR/USD\n` +
+                `📈 Monitoring: XAU/USD, GBP/USD, ETH/USD, EUR/USD\n` +
                 `🔄 Auto-scan: Every 15 minutes\n` +
                 `🤖 AI Engine: Gemini Pro\n` +
                 `📱 Only BUY/SELL → Telegram alert`,

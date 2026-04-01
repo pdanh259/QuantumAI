@@ -38,7 +38,7 @@ const SUPPORTED_SYMBOLS = [
     { symbol: 'USD/JPY', name: 'USD/Yen', type: 'forex', icon: '💴' },
     { symbol: 'AUD/USD', name: 'AUD/USD', type: 'forex', icon: '🇦🇺' },
     { symbol: 'USD/CHF', name: 'USD/CHF', type: 'forex', icon: '🇨🇭' },
-    { symbol: 'BTC/USD', name: 'Bitcoin', type: 'crypto', icon: '₿' },
+    { symbol: 'GBP/USD', name: 'Pound/USD', type: 'forex', icon: '💷' },
     { symbol: 'ETH/USD', name: 'Ethereum', type: 'crypto', icon: 'Ξ' },
 ];
 
@@ -376,7 +376,7 @@ app.post('/api/ea/confirm', express.json(), (req, res) => {
 
         // Convert MT5 symbol back to API format: "XAUUSD" → "XAU/USD"
         let apiSymbol = symbol;
-        const symMap = { XAUUSD: 'XAU/USD', BTCUSD: 'BTC/USD', EURUSD: 'EUR/USD', GBPUSD: 'GBP/USD', USDJPY: 'USD/JPY', AUDUSD: 'AUD/USD', USDCHF: 'USD/CHF', ETHUSD: 'ETH/USD' };
+        const symMap = { XAUUSD: 'XAU/USD', EURUSD: 'EUR/USD', GBPUSD: 'GBP/USD', USDJPY: 'USD/JPY', AUDUSD: 'AUD/USD', USDCHF: 'USD/CHF', ETHUSD: 'ETH/USD' };
         if (symMap[symbol]) apiSymbol = symMap[symbol];
 
         // Find the matching cached signal to get full details
@@ -481,7 +481,7 @@ app.get('*', (req, res) => {
 });
 
 // ==================== AUTO-ANALYSIS CRON ====================
-const AUTO_SYMBOLS = ['XAU/USD', 'BTC/USD'];  // Reduced to save API credits
+const AUTO_SYMBOLS = ['XAU/USD', 'GBP/USD'];  // Reduced to save API credits
 const MAX_TRADES_PER_DAY = parseInt(process.env.MAX_TRADES_PER_DAY || '3', 10); // Default: 3 lệnh/ngày
 let autoAnalysisEnabled = true;
 let isAnalysisRunning = false;
@@ -596,7 +596,7 @@ function getSymbolPipConfig(symbol) {
     const sym = symbol.toUpperCase();
     if (sym.includes('XAU')) return { pipSize: 0.1, decimals: 2 };
     if (sym.includes('JPY')) return { pipSize: 0.01, decimals: 3 };
-    if (sym.includes('BTC')) return { pipSize: 1, decimals: 2 };
+    // GBP/USD uses standard forex pip size (0.0001) — falls through to default
     if (sym.includes('ETH')) return { pipSize: 0.1, decimals: 2 };
     return { pipSize: 0.0001, decimals: 5 };
 }

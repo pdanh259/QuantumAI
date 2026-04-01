@@ -20,7 +20,7 @@ function getSymbolConfig(symbol) {
     const sym = symbol.toUpperCase();
     if (sym.includes('XAU')) return { pipSize: 0.1, decimals: 2 };
     if (sym.includes('JPY')) return { pipSize: 0.01, decimals: 3 };
-    if (sym.includes('BTC')) return { pipSize: 1, decimals: 2 };
+    // GBP/USD uses standard forex pip size — falls through to default
     if (sym.includes('ETH')) return { pipSize: 0.1, decimals: 2 };
     return { pipSize: 0.0001, decimals: 5 };
 }

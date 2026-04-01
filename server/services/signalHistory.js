@@ -259,7 +259,7 @@ function getSymbolPipSize(symbol) {
     const sym = (symbol || '').toUpperCase();
     if (sym.includes('XAU')) return 0.1;
     if (sym.includes('JPY')) return 0.01;
-    if (sym.includes('BTC')) return 1;
+    // GBP/USD uses standard forex pip 0.0001 — falls through to default
     if (sym.includes('ETH')) return 0.1;
     return 0.0001;
 }

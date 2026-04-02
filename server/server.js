@@ -265,9 +265,26 @@ async function runFullAnalysis(symbol) {
         sentiment: marketData.sentiment
     });
 
-    // Update cache
+    // Update cache — IMPORTANT: only overwrite a live BUY/SELL signal with NO_TRADE
+    // if it has been alive for more than 4 hours (signal TTL). This prevents the next
+    // scan from killing a valid signal before the EA has a chance to act on it.
     const cache = getCache(symbol);
-    cache.lastSignal = signal;
+    const SIGNAL_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+    const prevSignal = cache.lastSignal;
+    const prevIsActive = prevSignal && prevSignal.action !== 'NO_TRADE';
+    const prevAge = prevSignal?.timestamp ? (Date.now() - new Date(prevSignal.timestamp).getTime()) : Infinity;
+
+    if (signal.action !== 'NO_TRADE') {
+        // New BUY/SELL → always update
+        cache.lastSignal = signal;
+    } else if (!prevIsActive || prevAge > SIGNAL_TTL_MS) {
+        // Previous was NO_TRADE or expired (>4h) → safe to overwrite
+        cache.lastSignal = signal;
+    } else {
+        // Previous signal is still live (<4h) → keep it, just log
+        console.log(`💾 [Cache] ${symbol}: Keeping existing ${prevSignal.action} signal (age: ${Math.round(prevAge/60000)}m < 4h TTL). New scan returned NO_TRADE.`);
+    }
+
     cache.technicalAnalysis = technicalData;
     cache.quantData = quantData;
     cache.lastUpdate = new Date().toISOString();
@@ -362,6 +379,31 @@ app.get('/api/ea/signals', (req, res) => {
         serverTime: new Date().toISOString(),
         signals
     });
+});
+
+// ==================== EA DEBUG ENDPOINT ====================
+// Helps diagnose why EA is/isn't seeing signals → GET /api/ea/debug
+app.get('/api/ea/debug', (req, res) => {
+    const SIGNAL_TTL_MS = 4 * 60 * 60 * 1000;
+    const debug = SUPPORTED_SYMBOLS.map(symInfo => {
+        const cache = getCache(symInfo.symbol);
+        const sig = cache.lastSignal;
+        const ageMs = sig?.timestamp ? Date.now() - new Date(sig.timestamp).getTime() : null;
+        return {
+            symbol: symInfo.symbol,
+            mt5Symbol: symInfo.symbol.replace('/', ''),
+            lastSignalAction: sig?.action || 'none',
+            confidence: sig?.confidence || 0,
+            signalAgeMinutes: ageMs !== null ? Math.round(ageMs / 60000) : null,
+            signalExpired: ageMs !== null ? ageMs > SIGNAL_TTL_MS : true,
+            willAppearInEASignals: !!(sig && sig.action !== 'NO_TRADE'),
+            signalId: (sig && sig.action !== 'NO_TRADE')
+                ? `${symInfo.symbol.replace('/', '')}_${sig.timestamp || cache.lastUpdate}` : null,
+            lastUpdate: cache.lastUpdate,
+            reasons: sig?.reasons?.slice(0, 2) || [],
+        };
+    });
+    res.json({ success: true, serverTime: new Date().toISOString(), debug });
 });
 
 // EA confirms a trade was actually executed on MT5
@@ -617,9 +659,10 @@ app.listen(PORT, () => {
         initTelegramBot();
     }
 
-    // ★ Quét tự động liên tục (mỗi 15 phút)
-    // Hệ thống sẽ tự động vào lệnh khi điều kiện thỏa mãn và chưa vượt quá MAX_TRADES_PER_DAY
-    cron.schedule('*/15 * * * *',  () => runAutoAnalysis());
+    // ★ Scan tự động mỗi 1 giờ (phù hợp chiến lược H4+H1 intraday)
+    // Trước đây scan 15 phút nhưng AI cache 2 tiếng nên không tạo thêm signal mới
+    // Đổi thành 1 tiếng: tiết kiệm TwelveData API, phù hợp với khung H1
+    cron.schedule('0 * * * *', () => runAutoAnalysis());
 
     // Run first scan 30s after boot
     setTimeout(() => {
@@ -627,7 +670,9 @@ app.listen(PORT, () => {
         runAutoAnalysis();
     }, 30000);
 
-    console.log(`⏰ Auto-analysis: Liên tục mỗi 15 phút (chờ đủ điều kiện để vào lệnh)`);
+    console.log(`⏰ Auto-analysis: Mỗi 1 giờ (phù hợp intraday H4+H1)`);
+    console.log(`💾 Signal TTL: 4 tiếng (signal BUY/SELL giữ nguyên đến khi EA vào hoặc hết 4h)`);
+    console.log(`🔍 Debug EA: GET /api/ea/debug`);
 
     console.log(`📊 Tối đa ${MAX_TRADES_PER_DAY} lệnh/ngày/cặp tiền (MAX_TRADES_PER_DAY)`);
     console.log(`📊 Monitoring: ${AUTO_SYMBOLS.join(', ')}`);

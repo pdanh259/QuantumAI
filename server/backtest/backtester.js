@@ -190,8 +190,8 @@ function generateBacktestSignal(symbol, technicalData, quantData, config) {
         action: finalAction,
         entry: roundTo(entry, config.decimals),
         stopLoss: roundTo(isBuy ? entry - atr * 1.5 : entry + atr * 1.5, config.decimals),
-        tp1: roundTo(isBuy ? entry + atr * 1.5 : entry - atr * 1.5, config.decimals),
-        tp2: roundTo(isBuy ? entry + atr * 3 : entry - atr * 3, config.decimals),
+        tp1: roundTo(isBuy ? entry + atr * 2.0 : entry - atr * 2.0, config.decimals),
+        tp2: roundTo(isBuy ? entry + atr * 4.0 : entry - atr * 4.0, config.decimals),
         confidence,
         mtfAgreement: mtf.agreement,
     };

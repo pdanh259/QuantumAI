@@ -250,7 +250,8 @@ function buildAnalysisPrompt({ symbol, currentPrice, technicalData, quantData, n
 
 Quy tắc:
 1. Stop Loss phải dựa trên ATR hoặc Support/Resistance gần nhất
-2. TP1 ít nhất R:R 1:1, TP2 ít nhất R:R 1:2  
+2. TP1 tối thiểu R:R 1:1.33 (SL × 1.33), TP2 tối thiểu R:R 1:2.67 (SL × 2.67)
+   Ví dụ: SL=15 pip → TP1 ≥ 20 pip, TP2 ≥ 40 pip
 3. Nếu các timeframe mâu thuẫn nhau hoặc không rõ ràng, chọn NO_TRADE
 4. Confidence < 60% → nên chọn NO_TRADE
 5. Entry price nên là giá hiện tại hoặc giá limit gần S/R
@@ -293,9 +294,9 @@ function parseAIResponse(text, symbol, currentPrice) {
             const tp1Distance = Math.abs(tp1 - entry);
             const tp2Distance = tp2 ? Math.abs(tp2 - entry) : tp1Distance * 2;
             
-            // Maximum SL should be equal to TP1 distance (Risk 1 : Reward 1 for TP1)
-            // and at most half of TP2 distance (Risk 1 : Reward 2 for TP2)
-            const maxSlDistance = Math.min(tp1Distance, tp2Distance / 2);
+            // PA1: SL ≤ TP1/1.33 và SL ≤ TP2/2.67
+            // Đảm bảo Gemini không đặt SL quá rộng so với mục tiêu
+            const maxSlDistance = Math.min(tp1Distance / 1.33, tp2Distance / 2.67);
             
             if (slDistance > maxSlDistance && maxSlDistance > 0) {
                 if (isBuy) {
@@ -303,7 +304,7 @@ function parseAIResponse(text, symbol, currentPrice) {
                 } else if (isSell) {
                     stopLoss = entry + maxSlDistance;
                 }
-                const warningMsg = `Auto-adjusted SL from ${parsed.stopLoss} to ${round(stopLoss)} to strictly enforce R:R of 1:1 (TP1) and 1:2 (TP2)`;
+                const warningMsg = `Auto-adjusted SL from ${parsed.stopLoss} to ${round(stopLoss)} to enforce R:R 1:1.33 (TP1) and 1:2.67 (TP2)`;
                 console.log(`⚠️ ${symbol}: ${warningMsg}`);
                 
                 // Add to warnings
@@ -480,9 +481,10 @@ function generateFallbackSignal(symbol, technicalData, marketData, quantData) {
 
     const isBuy = finalAction === 'BUY';
     const entry = currentPrice;
-    const sl = isBuy ? roundTo(entry - atr * 1.5, decimals) : roundTo(entry + atr * 1.5, decimals);
-    const tp1 = isBuy ? roundTo(entry + atr * 1.5, decimals) : roundTo(entry - atr * 1.5, decimals);
-    const tp2 = isBuy ? roundTo(entry + atr * 3, decimals) : roundTo(entry - atr * 3, decimals);
+    // Phương án 1: SL=1.5×ATR | TP1=2.0×ATR (R:R 1:1.33) | TP2=4.0×ATR (R:R 1:2.67)
+    const sl  = isBuy ? roundTo(entry - atr * 1.5, decimals) : roundTo(entry + atr * 1.5, decimals);
+    const tp1 = isBuy ? roundTo(entry + atr * 2.0, decimals) : roundTo(entry - atr * 2.0, decimals);
+    const tp2 = isBuy ? roundTo(entry + atr * 4.0, decimals) : roundTo(entry - atr * 4.0, decimals);
 
     const slPips = roundTo(Math.abs(entry - sl) / pipSize, 1);
     const tp1Pips = roundTo(Math.abs(tp1 - entry) / pipSize, 1);

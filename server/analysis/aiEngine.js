@@ -7,8 +7,8 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ===== AI CALL CACHE (prevent quota exhaustion) =====
 // Cache AI results per symbol for AI_CACHE_MINUTES minutes
-// Default: 120 minutes (2 hours) → max 24 API calls/day for 2 symbols
-const AI_CACHE_MINUTES = parseInt(process.env.AI_CACHE_MINUTES || '120', 10);
+// Default: 15 minutes → scan mỗi 15 phút, signal luôn được generate mới
+const AI_CACHE_MINUTES = parseInt(process.env.AI_CACHE_MINUTES || '15', 10);
 const aiCache = {}; // { symbol: { signal, timestamp } }
 
 function getCachedSignal(symbol) {
@@ -38,7 +38,7 @@ export async function generateSignal({ symbol, marketData, technicalData, quantD
     if (cached) return cached;
 
     try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
         const currentPrice = marketData.pricesH1.length > 0 ?
             marketData.pricesH1[marketData.pricesH1.length - 1].close : 0;
@@ -331,7 +331,7 @@ function parseAIResponse(text, symbol, currentPrice) {
             timeframeAlignment: parsed.timeframeAlignment || '',
             reasoning: (parsed.reasons || []).join('; '),
             timestamp: new Date().toISOString(),
-            source: 'gemini-flash-latest'
+            source: 'gemini-2.0-flash'
         };
     } catch (error) {
         console.error('Error parsing AI response:', error.message);

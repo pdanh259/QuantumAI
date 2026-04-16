@@ -70,18 +70,24 @@ export async function generateSignal({ symbol, marketData, technicalData, quantD
         console.error('❌ AI Engine error:', error.message);
         if (error.status) console.error('   HTTP Status:', error.status);
         if (error.errorDetails) console.error('   Error Details:', JSON.stringify(error.errorDetails));
+
+        // Xác định lý do lỗi cụ thể
+        let reason;
         if (error.message?.includes('quota') || error.message?.includes('429')) {
             console.error('   ⚠️ QUOTA EXCEEDED: Gemini API quota đã hết!');
-        }
-        if (error.message?.includes('API_KEY') || error.message?.includes('401') || error.message?.includes('403')) {
+            reason = '⚠️ Gemini API quota đã hết – Không vào lệnh để đảm bảo an toàn';
+        } else if (error.message?.includes('API_KEY') || error.message?.includes('401') || error.message?.includes('403')) {
             console.error('   ⚠️ API KEY ERROR: Kiểm tra lại GEMINI_API_KEY!');
-        }
-        if (error.message?.includes('not found') || error.message?.includes('404')) {
+            reason = '⚠️ Lỗi API Key Gemini – Kiểm tra lại GEMINI_API_KEY';
+        } else if (error.message?.includes('not found') || error.message?.includes('404')) {
             console.error('   ⚠️ MODEL NOT FOUND: Model name không đúng!');
+            reason = '⚠️ Model Gemini không tìm thấy – Kiểm tra lại model name';
+        } else {
+            reason = `⚠️ AI lỗi: ${error.message} – Không vào lệnh`;
         }
 
-        // Fallback: generate signal from technical analysis alone
-        return generateFallbackSignal(symbol, technicalData, marketData, quantData);
+        // Không vào lệnh khi không có AI
+        return createNoTradeSignal(symbol, reason);
     }
 }
 

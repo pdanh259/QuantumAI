@@ -659,10 +659,8 @@ app.listen(PORT, () => {
         initTelegramBot();
     }
 
-    // ★ Scan tự động mỗi 1 giờ (phù hợp chiến lược H4+H1 intraday)
-    // Trước đây scan 15 phút nhưng AI cache 2 tiếng nên không tạo thêm signal mới
-    // Đổi thành 1 tiếng: tiết kiệm TwelveData API, phù hợp với khung H1
-    cron.schedule('0 * * * *', () => runAutoAnalysis());
+    // ★ Scan tự động mỗi 30 phút (AI cache cũng 30 phút → luôn ra signal mới)
+    cron.schedule('*/30 * * * *', () => runAutoAnalysis());
 
     // Run first scan 30s after boot
     setTimeout(() => {
@@ -670,7 +668,7 @@ app.listen(PORT, () => {
         runAutoAnalysis();
     }, 30000);
 
-    console.log(`⏰ Auto-analysis: Mỗi 1 giờ (phù hợp intraday H4+H1)`);
+    console.log(`⏰ Auto-analysis: Mỗi 30 phút (AI cache 30 phút → signal luôn mới)`);
     console.log(`💾 Signal TTL: 4 tiếng (signal BUY/SELL giữ nguyên đến khi EA vào hoặc hết 4h)`);
     console.log(`🔍 Debug EA: GET /api/ea/debug`);
 

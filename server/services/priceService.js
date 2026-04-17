@@ -8,10 +8,10 @@ const BASE_URL = 'https://api.twelvedata.com';
 // ==================== TTL CACHE ====================
 const priceCache = {};
 const CACHE_TTL = {
-    '1h': 10 * 60 * 1000,  // 10 minutes
-    '4h': 30 * 60 * 1000,  // 30 minutes
-    '1day': 60 * 60 * 1000,  // 1 hour
-    '15min': 5 * 60 * 1000,  // 5 minutes
+    '1h':    25 * 60 * 1000,  // 25 phút (scan 30 phút/lần)
+    '4h':    60 * 60 * 1000,  // 60 phút
+    '1day': 120 * 60 * 1000,  // 2 tiếng
+    '15min': 12 * 60 * 1000,  // 12 phút
 };
 
 function getCacheKey(symbol, interval) {

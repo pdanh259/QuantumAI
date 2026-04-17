@@ -212,27 +212,34 @@ async function runFullAnalysis(symbol) {
 
     // Step 1: Fetch all data
     console.log('📡 Step 1: Fetching market data...');
-    const [pricesH1, pricesH4, pricesD1, pricesM15, news, calendar, intermarket, sentiment] =
-        await Promise.allSettled([
-            fetchPriceData(symbol, '1h', 100),
-            fetchPriceData(symbol, '4h', 100),
-            fetchPriceData(symbol, '1day', 100),
-            fetchPriceData(symbol, '15min', 100),
-            fetchNews(),
-            fetchEconomicCalendar(),
-            fetchIntermarketData(),
-            fetchSentiment()
-        ]);
+
+    // Fetch price timeframes tuần tự (tránh vượt 8 req/phút TwelveData)
+    const delay = (ms) => new Promise(r => setTimeout(r, ms));
+    const h1Raw    = await fetchPriceData(symbol, '1h', 100);
+    await delay(1500);
+    const h4Raw    = await fetchPriceData(symbol, '4h', 100);
+    await delay(1500);
+    const d1Raw    = await fetchPriceData(symbol, '1day', 100);
+    await delay(1500);
+    const m15Raw   = await fetchPriceData(symbol, '15min', 100);
+
+    // Fetch non-price APIs song song (không ảnh hưởng TwelveData quota)
+    const [news, calendar, intermarket, sentiment] = await Promise.allSettled([
+        fetchNews(),
+        fetchEconomicCalendar(),
+        fetchIntermarketData(),
+        fetchSentiment()
+    ]);
 
     const marketData = {
-        pricesH1: pricesH1.status === 'fulfilled' ? pricesH1.value : [],
-        pricesH4: pricesH4.status === 'fulfilled' ? pricesH4.value : [],
-        pricesD1: pricesD1.status === 'fulfilled' ? pricesD1.value : [],
-        pricesM15: pricesM15.status === 'fulfilled' ? pricesM15.value : [],
-        news: news.status === 'fulfilled' ? news.value : [],
-        calendar: calendar.status === 'fulfilled' ? calendar.value : [],
+        pricesH1:  h1Raw,
+        pricesH4:  h4Raw,
+        pricesD1:  d1Raw,
+        pricesM15: m15Raw,
+        news:        news.status === 'fulfilled' ? news.value : [],
+        calendar:    calendar.status === 'fulfilled' ? calendar.value : [],
         intermarket: intermarket.status === 'fulfilled' ? intermarket.value : {},
-        sentiment: sentiment.status === 'fulfilled' ? sentiment.value : {}
+        sentiment:   sentiment.status === 'fulfilled' ? sentiment.value : {}
     };
 
     // Step 2: Technical Analysis

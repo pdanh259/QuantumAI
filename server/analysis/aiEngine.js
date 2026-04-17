@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import { generateLearningContext } from '../services/signalHistory.js';
 dotenv.config();
@@ -37,15 +37,16 @@ function setCachedSignal(symbol, signal) {
 }
 
 /**
- * Thử gọi Gemini với một API key cụ thể
+ * Thử gọi Gemini với một API key cụ thể (dùng @google/genai mới)
  */
 async function callGeminiWithKey(apiKey, fullPrompt, keyIndex) {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const ai = new GoogleGenAI({ apiKey });
     console.log(`📤 Sending prompt to Gemini (Key ${keyIndex + 1})...`);
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    return response.text();
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: fullPrompt,
+    });
+    return response.text;
 }
 
 /**

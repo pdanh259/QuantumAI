@@ -3,12 +3,21 @@ import dotenv from 'dotenv';
 import { generateLearningContext } from '../services/signalHistory.js';
 dotenv.config();
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// ===== MULTI-KEY ROTATION (chống hết quota) =====
+// Danh sách key theo thứ tự ưu tiên (key 1 dùng trước, key 2 dùng khi key 1 hết quota)
+const GEMINI_KEYS = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+].filter(Boolean); // Bỏ qua key nào chưa cấu hình
+
+if (GEMINI_KEYS.length === 0) {
+    console.error('❌ Không có GEMINI_API_KEY nào được cấu hình!');
+}
+
+console.log(`🔑 Gemini: ${GEMINI_KEYS.length} API key(s) configured`);
 
 // ===== AI CALL CACHE (prevent quota exhaustion) =====
-// Cache AI results per symbol for AI_CACHE_MINUTES minutes
-// Default: 15 minutes → scan mỗi 15 phút, signal luôn được generate mới
-const AI_CACHE_MINUTES = parseInt(process.env.AI_CACHE_MINUTES || '15', 10);
+const AI_CACHE_MINUTES = parseInt(process.env.AI_CACHE_MINUTES || '30', 10);
 const aiCache = {}; // { symbol: { signal, timestamp } }
 
 function getCachedSignal(symbol) {
@@ -27,68 +36,82 @@ function setCachedSignal(symbol, signal) {
     console.log(`💾 [AI Cache] ${symbol} → Signal cached for ${AI_CACHE_MINUTES} minutes`);
 }
 
+/**
+ * Thử gọi Gemini với một API key cụ thể
+ */
+async function callGeminiWithKey(apiKey, fullPrompt, keyIndex) {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    console.log(`📤 Sending prompt to Gemini (Key ${keyIndex + 1})...`);
+    const result = await model.generateContent(fullPrompt);
+    const response = await result.response;
+    return response.text();
+}
 
 /**
- * Generate AI trading signal using Gemini Pro
- * Aggregates all data sources and uses structured prompt engineering
+ * Generate AI trading signal using Gemini - có xoay vòng key tự động
  */
 export async function generateSignal({ symbol, marketData, technicalData, quantData, news, calendar, intermarket, sentiment }) {
     // ---- Check AI cache first ----
     const cached = getCachedSignal(symbol);
     if (cached) return cached;
 
-    try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const currentPrice = marketData.pricesH1.length > 0 ?
+        marketData.pricesH1[marketData.pricesH1.length - 1].close : 0;
 
-        const currentPrice = marketData.pricesH1.length > 0 ?
-            marketData.pricesH1[marketData.pricesH1.length - 1].close : 0;
+    const prompt = buildAnalysisPrompt({
+        symbol, currentPrice, technicalData, quantData, news, calendar, intermarket, sentiment
+    });
 
-        const prompt = buildAnalysisPrompt({
-            symbol, currentPrice, technicalData, quantData, news, calendar, intermarket, sentiment
-        });
+    const learningCtx = generateLearningContext();
+    const fullPrompt = learningCtx ? prompt + learningCtx : prompt;
 
-        // Append learning context from past performance
-        const learningCtx = generateLearningContext();
-        const fullPrompt = learningCtx ? prompt + learningCtx : prompt;
+    // ---- Thử từng key theo thứ tự ----
+    let lastError = null;
+    for (let i = 0; i < GEMINI_KEYS.length; i++) {
+        try {
+            const text = await callGeminiWithKey(GEMINI_KEYS[i], fullPrompt, i);
+            console.log(`📥 Gemini response received (Key ${i + 1})`);
 
-        console.log('📤 Sending prompt to Gemini...');
+            const signal = parseAIResponse(text, symbol, currentPrice);
+            setCachedSignal(symbol, signal);
+            return signal;
 
-        const result = await model.generateContent(fullPrompt);
-        const response = await result.response;
-        const text = response.text();
+        } catch (error) {
+            lastError = error;
+            const isQuota = error.message?.includes('quota') || error.message?.includes('429');
 
-        console.log('📥 Gemini response received');
+            if (isQuota && i < GEMINI_KEYS.length - 1) {
+                // Hết quota key hiện tại → thử key tiếp theo
+                console.warn(`⚠️ Key ${i + 1} hết quota (429) → Chuyển sang Key ${i + 2}...`);
+                continue;
+            }
 
-        // Parse AI response into structured signal
-        const signal = parseAIResponse(text, symbol, currentPrice);
-
-        // Cache successful AI result
-        setCachedSignal(symbol, signal);
-
-        return signal;
-    } catch (error) {
-        console.error('❌ AI Engine error:', error.message);
-        if (error.status) console.error('   HTTP Status:', error.status);
-        if (error.errorDetails) console.error('   Error Details:', JSON.stringify(error.errorDetails));
-
-        // Xác định lý do lỗi cụ thể
-        let reason;
-        if (error.message?.includes('quota') || error.message?.includes('429')) {
-            console.error('   ⚠️ QUOTA EXCEEDED: Gemini API quota đã hết!');
-            reason = '⚠️ Gemini API quota đã hết – Không vào lệnh để đảm bảo an toàn';
-        } else if (error.message?.includes('API_KEY') || error.message?.includes('401') || error.message?.includes('403')) {
-            console.error('   ⚠️ API KEY ERROR: Kiểm tra lại GEMINI_API_KEY!');
-            reason = '⚠️ Lỗi API Key Gemini – Kiểm tra lại GEMINI_API_KEY';
-        } else if (error.message?.includes('not found') || error.message?.includes('404')) {
-            console.error('   ⚠️ MODEL NOT FOUND: Model name không đúng!');
-            reason = '⚠️ Model Gemini không tìm thấy – Kiểm tra lại model name';
-        } else {
-            reason = `⚠️ AI lỗi: ${error.message} – Không vào lệnh`;
+            // Lỗi không phải quota, hoặc đã hết tất cả key
+            break;
         }
-
-        // Không vào lệnh khi không có AI
-        return createNoTradeSignal(symbol, reason);
     }
+
+    // ---- Tất cả key đều lỗi → NO_TRADE ----
+    const error = lastError;
+    console.error('❌ AI Engine error (all keys failed):', error?.message);
+    if (error?.status) console.error('   HTTP Status:', error.status);
+
+    let reason;
+    if (error?.message?.includes('quota') || error?.message?.includes('429')) {
+        console.error(`   ⚠️ Tất cả ${GEMINI_KEYS.length} key đều hết quota!`);
+        reason = `⚠️ Tất cả ${GEMINI_KEYS.length} Gemini API key đều hết quota – Không vào lệnh`;
+    } else if (error?.message?.includes('API_KEY') || error?.message?.includes('401') || error?.message?.includes('403')) {
+        console.error('   ⚠️ API KEY ERROR: Kiểm tra lại GEMINI_API_KEY!');
+        reason = '⚠️ Lỗi API Key Gemini – Kiểm tra lại GEMINI_API_KEY';
+    } else if (error?.message?.includes('not found') || error?.message?.includes('404')) {
+        console.error('   ⚠️ MODEL NOT FOUND: Model name không đúng!');
+        reason = '⚠️ Model Gemini không tìm thấy – Kiểm tra lại model name';
+    } else {
+        reason = `⚠️ AI lỗi: ${error?.message} – Không vào lệnh`;
+    }
+
+    return createNoTradeSignal(symbol, reason);
 }
 
 /**

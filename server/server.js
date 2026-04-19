@@ -666,8 +666,8 @@ app.listen(PORT, () => {
         initTelegramBot();
     }
 
-    // ★ Scan tự động mỗi 30 phút (AI cache cũng 30 phút → luôn ra signal mới)
-    cron.schedule('*/30 * * * *', () => runAutoAnalysis());
+    // ★ Scan tự động mỗi 1 tiếng (AI cache cũng 60 phút → luôn ra signal mới)
+    cron.schedule('0 * * * *', () => runAutoAnalysis());
 
     // Run first scan 30s after boot
     setTimeout(() => {
@@ -675,7 +675,7 @@ app.listen(PORT, () => {
         runAutoAnalysis();
     }, 30000);
 
-    console.log(`⏰ Auto-analysis: Mỗi 30 phút (AI cache 30 phút → signal luôn mới)`);
+    console.log(`⏰ Auto-analysis: Mỗi 1 tiếng (AI cache 60 phút → signal luôn mới)`);
     console.log(`💾 Signal TTL: 4 tiếng (signal BUY/SELL giữ nguyên đến khi EA vào hoặc hết 4h)`);
     console.log(`🔍 Debug EA: GET /api/ea/debug`);
 

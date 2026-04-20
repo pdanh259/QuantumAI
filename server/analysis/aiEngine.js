@@ -112,7 +112,11 @@ export async function generateSignal({ symbol, marketData, technicalData, quantD
         reason = `⚠️ AI lỗi: ${error?.message} – Không vào lệnh`;
     }
 
-    return createNoTradeSignal(symbol, reason);
+    const errorSignal = createNoTradeSignal(symbol, reason);
+    if (reason.includes('quota')) {
+        setCachedSignal(symbol, errorSignal);
+    }
+    return errorSignal;
 }
 
 /**
@@ -381,6 +385,7 @@ function createNoTradeSignal(symbol, reason) {
         confidence: 0,
         riskReward: 'N/A',
         reasons: [reason],
+        reasoning: reason,
         warnings: [],
         marketCondition: 'UNKNOWN',
         timestamp: new Date().toISOString(),

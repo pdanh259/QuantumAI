@@ -43,7 +43,7 @@ async function callGeminiWithKey(apiKey, fullPrompt, keyIndex) {
     const ai = new GoogleGenAI({ apiKey });
     console.log(`📤 Sending prompt to Gemini (Key ${keyIndex + 1})...`);
     const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-1.5-flash',
         contents: fullPrompt,
     });
     return response.text;
@@ -365,7 +365,7 @@ function parseAIResponse(text, symbol, currentPrice) {
             timeframeAlignment: parsed.timeframeAlignment || '',
             reasoning: (parsed.reasons || []).join('; '),
             timestamp: new Date().toISOString(),
-            source: 'gemini-2.0-flash'
+            source: 'gemini-1.5-flash'
         };
     } catch (error) {
         console.error('Error parsing AI response:', error.message);

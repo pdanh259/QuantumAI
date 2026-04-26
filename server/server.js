@@ -551,6 +551,13 @@ async function runAutoAnalysis() {
     if (!autoAnalysisEnabled || isAnalysisRunning) return;
     isAnalysisRunning = true;
 
+    const now = new Date();
+    const day = now.getDay(); // 0 = Sunday, 6 = Saturday
+    if (day === 0 || day === 6) {
+        console.log(`\n⏭️ [AUTO] Today is ${day === 0 ? 'Sunday' : 'Saturday'}, skipping analysis to save tokens.`);
+        return;
+    }
+
     const hasTelegram = process.env.TELEGRAM_BOT_TOKEN &&
         process.env.TELEGRAM_BOT_TOKEN !== 'YOUR_TELEGRAM_BOT_TOKEN_HERE' &&
         process.env.TELEGRAM_CHAT_ID &&
@@ -666,8 +673,8 @@ app.listen(PORT, () => {
         initTelegramBot();
     }
 
-    // ★ Scan tự động mỗi 1 tiếng (AI cache cũng 60 phút → luôn ra signal mới)
-    cron.schedule('0 * * * *', () => runAutoAnalysis());
+    // ★ Scan tự động mỗi 1 tiếng từ Thứ 2 đến Thứ 6 (AI cache cũng 60 phút → luôn ra signal mới)
+    cron.schedule('0 * * * 1-5', () => runAutoAnalysis());
 
     // Run first scan 30s after boot
     setTimeout(() => {

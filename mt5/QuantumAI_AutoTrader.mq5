@@ -14,7 +14,7 @@ input string   ServerURL        = "http://YOUR_VPS_IP:3001";  // QuantumAI Serve
 input double   RiskPercent      = 1.0;                         // Risk % per Trade (0 = Fixed Lot)
 input double   FixedLotSize     = 0.10;                        // Fixed Lot Size (if Risk = 0)
 input int      MagicNumber      = 888888;                      // Magic Number
-input int      PollIntervalSec  = 60;                          // Poll interval (seconds)
+input int      PollIntervalSec  = 900;                         // Poll interval (seconds) [900 = 15 min]
 input int      MaxTradesPerSymbol = 1;                         // Max open trades per symbol
 input int      MaxTotalTrades   = 5;                           // Max total open trades
 input int      MinConfidence    = 60;                          // Minimum confidence (%)
@@ -23,7 +23,7 @@ input bool     EnableBuy        = true;                        // Allow BUY trad
 input bool     EnableSell       = true;                        // Allow SELL trades
 input bool     UseTP2           = false;                       // Use TP2 instead of TP1 (if Scale-Out is off)
 input bool     EnableScaleOut   = true;                        // Enable Scale-Out (50% TP1, 50% TP2)
-input string   SymbolSuffix     = "";                          // Symbol suffix (e.g. ".r" for TMGM)
+input string   SymbolSuffix     = "c";                         // Symbol suffix (e.g. "c" for Exness Cent, ".r" for TMGM)
 
 //--- Trailing Stop Parameters
 input bool     EnableTrailing   = true;                        // Enable Trailing Stop
@@ -33,6 +33,11 @@ input double   TrailStart2Pct   = 75.0;                        // Level 2: Trail
 input double   TrailSL2Pct      = 50.0;                        // Level 2: Move SL to % of TP
 input double   TrailStart3Pct   = 90.0;                        // Level 3: Trail at % of TP
 input double   TrailSL3Pct      = 75.0;                        // Level 3: Move SL to % of TP
+
+//--- Friday Close Parameters
+input bool     EnableFridayClose = true;                        // Auto-close all trades on Friday 23:55
+input int      FridayCloseHour   = 23;                          // Hour to close (23)
+input int      FridayCloseMin    = 55;                          // Minute to close (55)
 
 //--- Global variables
 datetime lastPollTime = 0;
@@ -94,6 +99,10 @@ void OnTimer()
 //+------------------------------------------------------------------+
 void OnTick()
 {
+    // Friday Close Check
+    if(EnableFridayClose)
+        CheckFridayClose();
+
     // Manage trailing stops on every tick
     if(EnableTrailing)
         ManageOpenTrades();
@@ -900,6 +909,63 @@ double GetJsonDouble(string json, string key)
 int GetJsonInt(string json, string key)
 {
     return (int)GetJsonDouble(json, key);
+}
+
+//+------------------------------------------------------------------+
+//| Friday Close logic                                                 |
+//+------------------------------------------------------------------+
+void CheckFridayClose()
+{
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+    
+    // Friday is 5
+    if(dt.day_of_week == 5)
+    {
+        if(dt.hour == FridayCloseHour && dt.min >= FridayCloseMin)
+        {
+            if(PositionsTotal() > 0)
+            {
+                Print("🚨 FRIDAY CLOSE: Auto-closing all positions at 23:55...");
+                CloseAllPositions();
+            }
+        }
+    }
+}
+
+void CloseAllPositions()
+{
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket == 0) continue;
+        
+        // Only close trades with our MagicNumber
+        if(PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+        {
+            string symbol = PositionGetString(POSITION_SYMBOL);
+            double volume = PositionGetDouble(POSITION_VOLUME);
+            long   type   = PositionGetInteger(POSITION_TYPE);
+            
+            MqlTradeRequest request = {};
+            MqlTradeResult  result  = {};
+            
+            request.action    = TRADE_ACTION_DEAL;
+            request.position  = ticket;
+            request.symbol    = symbol;
+            request.volume    = volume;
+            request.magic     = MagicNumber;
+            request.price     = (type == POSITION_TYPE_BUY) ? SymbolInfoDouble(symbol, SYMBOL_BID) : SymbolInfoDouble(symbol, SYMBOL_ASK);
+            request.type      = (type == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+            request.deviation = 50;
+            request.comment   = "Friday Close";
+            
+            if(OrderSend(request, result))
+                Print("✅ Closed position #", ticket, " (Friday Close)");
+            else
+                Print("❌ Failed to close position #", ticket, " (Error: ", result.retcode, ")");
+        }
+    }
 }
 
 //+------------------------------------------------------------------+

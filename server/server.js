@@ -549,8 +549,7 @@ function countTodaySignals(symbol) {
 
 async function runAutoAnalysis() {
     if (!autoAnalysisEnabled || isAnalysisRunning) return;
-    isAnalysisRunning = true;
-
+    
     const now = new Date();
     const day = now.getDay(); // 0 = Sunday, 6 = Saturday
     if (day === 0 || day === 6) {
@@ -558,54 +557,59 @@ async function runAutoAnalysis() {
         return;
     }
 
-    const hasTelegram = process.env.TELEGRAM_BOT_TOKEN &&
-        process.env.TELEGRAM_BOT_TOKEN !== 'YOUR_TELEGRAM_BOT_TOKEN_HERE' &&
-        process.env.TELEGRAM_CHAT_ID &&
-        process.env.TELEGRAM_CHAT_ID !== 'YOUR_CHAT_ID_HERE';
+    isAnalysisRunning = true;
+    try {
+        const hasTelegram = process.env.TELEGRAM_BOT_TOKEN &&
+            process.env.TELEGRAM_BOT_TOKEN !== 'YOUR_TELEGRAM_BOT_TOKEN_HERE' &&
+            process.env.TELEGRAM_CHAT_ID &&
+            process.env.TELEGRAM_CHAT_ID !== 'YOUR_CHAT_ID_HERE';
 
-    const timeStr = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
-    console.log(`\n⏰ [AUTO] Starting scheduled analysis at ${timeStr}...`);
+        const timeStr = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+        console.log(`\n⏰ [AUTO] Starting scheduled analysis at ${timeStr}...`);
 
-    // Step 0: Track outcomes of open signals
-    console.log('📊 [AUTO] Checking open signal outcomes...');
-    await trackOpenSignalOutcomes();
+        // Step 0: Track outcomes of open signals
+        console.log('📊 [AUTO] Checking open signal outcomes...');
+        await trackOpenSignalOutcomes();
 
-    let signalsSent = 0;
+        let signalsSent = 0;
 
-    for (const symbol of AUTO_SYMBOLS) {
-        try {
-            // ---- Kiểm tra giới hạn lệnh mỗi ngày ----
-            const todayCount = countTodaySignals(symbol);
-            if (todayCount >= MAX_TRADES_PER_DAY) {
-                console.log(`⏭️ [AUTO] ${symbol} → Đã đủ ${todayCount}/${MAX_TRADES_PER_DAY} lệnh hôm nay, bỏ qua.`);
-                continue;
+        for (const symbol of AUTO_SYMBOLS) {
+            try {
+                // ---- Kiểm tra giới hạn lệnh mỗi ngày ----
+                const todayCount = countTodaySignals(symbol);
+                if (todayCount >= MAX_TRADES_PER_DAY) {
+                    console.log(`⏭️ [AUTO] ${symbol} → Đã đủ ${todayCount}/${MAX_TRADES_PER_DAY} lệnh hôm nay, bỏ qua.`);
+                    continue;
+                }
+                console.log(`\n🔄 [AUTO] Analyzing ${symbol}... (Hôm nay: ${todayCount}/${MAX_TRADES_PER_DAY} lệnh)`);
+                const result = await runFullAnalysis(symbol);
+
+                if (hasTelegram && result.signal && result.signal.action !== 'NO_TRADE') {
+                    await sendTelegramSignal(result.signal);
+                    signalsSent++;
+                    console.log(`📱 [AUTO] ${symbol} → ${result.signal.action} signal sent to Telegram!`);
+                } else {
+                    console.log(`⏭️ [AUTO] ${symbol} → ${result.signal?.action || 'NO_TRADE'}, skipping Telegram`);
+                }
+
+                // Delay between symbols to avoid API rate limits (15s)
+                await new Promise(r => setTimeout(r, 15000));
+            } catch (err) {
+                console.error(`❌ [AUTO] Error analyzing ${symbol}:`, err.message);
             }
-            console.log(`\n🔄 [AUTO] Analyzing ${symbol}... (Hôm nay: ${todayCount}/${MAX_TRADES_PER_DAY} lệnh)`);
-            const result = await runFullAnalysis(symbol);
-
-            if (hasTelegram && result.signal && result.signal.action !== 'NO_TRADE') {
-                await sendTelegramSignal(result.signal);
-                signalsSent++;
-                console.log(`📱 [AUTO] ${symbol} → ${result.signal.action} signal sent to Telegram!`);
-            } else {
-                console.log(`⏭️ [AUTO] ${symbol} → ${result.signal?.action || 'NO_TRADE'}, skipping Telegram`);
-            }
-
-            // Delay between symbols to avoid API rate limits (15s)
-            await new Promise(r => setTimeout(r, 15000));
-        } catch (err) {
-            console.error(`❌ [AUTO] Error analyzing ${symbol}:`, err.message);
         }
-    }
 
-    // Log performance stats
-    const stats = calculatePerformanceStats();
-    console.log(`\n✅ [AUTO] Scan complete! ${signalsSent}/${AUTO_SYMBOLS.length} signals sent`);
-    if (stats.totalSignals > 0) {
-        console.log(`📈 [PERF] Total: ${stats.totalSignals} | Win: ${stats.winRate}% | PnL: ${stats.totalPnlPips} pips | Open: ${stats.openSignals}`);
+        // Log performance stats
+        const stats = calculatePerformanceStats();
+        console.log(`\n✅ [AUTO] Scan complete! ${signalsSent}/${AUTO_SYMBOLS.length} signals sent`);
+        if (stats.totalSignals > 0) {
+            console.log(`📈 [PERF] Total: ${stats.totalSignals} | Win: ${stats.winRate}% | PnL: ${stats.totalPnlPips} pips | Open: ${stats.openSignals}`);
+        }
+    } catch (error) {
+        console.error('❌ [AUTO] Fatal error in auto-analysis:', error.message);
+    } finally {
+        isAnalysisRunning = false;
     }
-
-    isAnalysisRunning = false;
 }
 
 /**

@@ -183,6 +183,13 @@ function buildAnalysisPrompt({ symbol, currentPrice, technicalData, quantData, n
                 if (data.candlePatterns && data.candlePatterns.length > 0) {
                     prompt += `Candlestick Patterns: ${data.candlePatterns.map(p => `${p.name} (${p.direction})`).join(', ')}\n`;
                 }
+
+                if (data.exhaustion) {
+                    prompt += `Trend Exhaustion Score: ${data.exhaustion.exhaustionScore}/100 (${data.exhaustion.label})\n`;
+                    if (data.exhaustion.signals && data.exhaustion.signals.length > 0) {
+                        prompt += `Exhaustion Signals: ${data.exhaustion.signals.join(', ')}\n`;
+                    }
+                }
             }
         }
     }
@@ -291,6 +298,13 @@ Quy tắc:
 5. Entry price nên là giá hiện tại hoặc giá limit gần S/R
 6. Trả lời bằng Tiếng Việt cho reasons và warnings
 7. CHỈ trả về JSON, KHÔNG có text giải thích bên ngoài
+
+⚠️ QUY TẮC CHỐNG VÀO CUỐI TREND:
+- Nếu phát hiện Bearish Divergence (RSI/MACD) → KHÔNG MUA
+- Nếu phát hiện Bullish Divergence → KHÔNG BÁN  
+- Nếu RSI > 75 (mua) hoặc RSI < 25 (bán) → nên NO_TRADE
+- Nếu MACD Histogram đang giảm dần → giảm confidence
+- Nếu Trend Exhaustion Score >= 70 → BẮT BUỘC NO_TRADE
 `;
 
     return prompt;
@@ -460,6 +474,19 @@ function generateFallbackSignal(symbol, technicalData, marketData, quantData) {
     const techBullish = mtf.direction === 'BULLISH';
     let mtfConfidence = mtf.confidence;
 
+    // ========== TREND EXHAUSTION FILTER ==========
+    const exhaustion = h1.exhaustion;
+    if (exhaustion) {
+        if (exhaustion.isExhausted) {
+            return createNoTradeSignal(symbol,
+                `Trend Exhaustion (Score: ${exhaustion.exhaustionScore}): ${exhaustion.signals[0]}`
+            );
+        }
+        if (exhaustion.exhaustionScore >= 50) {
+            mtfConfidence -= 15; // Reduce confidence if trend is significantly weak
+        }
+    }
+
     // ========== QUANT VALIDATION ==========
     const quantScore = quantData?.compositeScore?.score || null;
     const quantSignal = quantData?.compositeScore?.signal || null;
@@ -610,8 +637,13 @@ function analyzeMultiTimeframe(technicalData) {
     // RSI extreme filter (H1)
     const rsi = h1?.momentum?.rsi?.value;
     if (rsi) {
-        if (direction === 'BULLISH' && rsi > 75) confidence -= 10;
-        if (direction === 'BEARISH' && rsi < 25) confidence -= 10;
+        if (direction === 'BULLISH' && rsi > 75) confidence -= 20;
+        if (direction === 'BEARISH' && rsi < 25) confidence -= 20;
+    }
+
+    // MACD fading filter (H1)
+    if (h1?.trend?.macd?.histogramTrend === 'fading') {
+        confidence -= 15;
     }
 
     confidence = Math.min(90, Math.max(0, confidence));

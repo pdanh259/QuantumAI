@@ -1,6 +1,7 @@
 import {
     EMA, RSI, MACD, BollingerBands, ATR, ADX, Stochastic, CCI, SMA
 } from 'technicalindicators';
+import { detectTrendExhaustion } from './trendExhaustion.js';
 
 /**
  * Run full technical analysis on OHLCV data
@@ -88,6 +89,9 @@ export function runTechnicalAnalysis(candles, timeframe) {
         currentEma20, currentEma50, currentBB
     });
 
+    // ===== TREND EXHAUSTION =====
+    const exhaustion = detectTrendExhaustion(candles, bias.direction);
+
     return {
         timeframe,
         currentPrice,
@@ -97,6 +101,10 @@ export function runTechnicalAnalysis(candles, timeframe) {
             ema50: round(currentEma50),
             ema200: round(currentEma200),
             emaAlignment,
+            age: {
+                barsFromEma50: exhaustion.details.trendDistance?.barsFromEma || 0,
+                distanceFromEma50Pct: exhaustion.details.trendDistance?.distancePct || 0
+            },
             macd: currentMacd ? {
                 macd: round(currentMacd.MACD),
                 signal: round(currentMacd.signal),
@@ -104,7 +112,9 @@ export function runTechnicalAnalysis(candles, timeframe) {
                 crossover: prevMacd ?
                     (prevMacd.MACD < prevMacd.signal && currentMacd.MACD > currentMacd.signal ? 'bullish_cross' :
                         prevMacd.MACD > prevMacd.signal && currentMacd.MACD < currentMacd.signal ? 'bearish_cross' : 'none')
-                    : 'none'
+                    : 'none',
+                histogramTrend: exhaustion.details.macdFading?.isFading ? 'fading' : 'expanding',
+                fadingBars: exhaustion.details.macdFading?.fadingBars || 0
             } : null,
             adx: currentAdx ? {
                 adx: round(currentAdx.adx),
@@ -148,7 +158,8 @@ export function runTechnicalAnalysis(candles, timeframe) {
 
         supportResistance: sr,
         candlePatterns: patterns,
-        bias
+        bias,
+        exhaustion
     };
 }
 
